@@ -48,10 +48,8 @@ def get_supabase_client() -> Optional[Client]:
         timeout=httpx.Timeout(30.0),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
     )
-    try:
-        return create_client(url, sr_key, options=SyncClientOptions(httpx_client=http_client))
-    except TypeError:
-        return create_client(url, sr_key)
+    # Requires supabase>=2.31 (httpx_client option). No silent fallback to the shared HTTP/2 client.
+    return create_client(url, sr_key, options=SyncClientOptions(httpx_client=http_client))
 
 
 class SupabaseService:

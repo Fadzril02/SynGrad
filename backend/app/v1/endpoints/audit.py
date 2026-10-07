@@ -127,11 +127,12 @@ def _load_tenant_slip_profile(tenant_id: str) -> Optional[str]:
             res = _q()
         except httpx.TransportError:
             res = _q()
-        if res and res.data and len(res.data) > 0:
-            return res.data[0].get("slip_profile")
     except Exception as e:
-        logger.warning(f"Could not load tenant slip_profile: {e}")
-    return None
+        # Fail loud: a DB error must not silently route a known university to the AI path.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not load tenant settings: {e}")
+    if not res or not res.data:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Tenant '{tenant_id}' not found.")
+    return res.data[0].get("slip_profile")  # NULL = no rule profile -> universal reader
 
 
 supabase_svc = SupabaseService()
