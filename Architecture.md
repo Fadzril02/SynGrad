@@ -23,7 +23,7 @@ Sections 1–5 were written at v1.0.0 and are partly outdated (e.g. `registratio
 ### 0.2 Key tables
 | Table | Notes |
 |---|---|
-| `tenants` | `student_email_domains[]`, `matric_regex`, `min_pass_grade`, `default_prereq_min_grade`, `repeat_policy` (`latest`/`best`/…) |
+| `tenants` | `student_email_domains[]`, `matric_regex`, `min_pass_grade`, `default_prereq_min_grade`, `repeat_policy` (`latest`/`best`/…), `slip_profile` ('utm' vs NULL for universal AI reader) |
 | `grade_scales` | per tenant: grade, point, min/max mark, `is_pass`, `achievement_label`; special codes (HL, EX, CT, TD, TS). Presets in `grade_scale_presets`, `clone_preset_to_tenant()` |
 | `advisor_invites` | invite codes for advisor registration |
 | `advisors`, `students` | identity columns protected by triggers; `students.matric_no` currently globally unique (blocks same matric at two tenants — fix before 2nd university) |
@@ -63,9 +63,9 @@ Sections 1–5 were written at v1.0.0 and are partly outdated (e.g. `registratio
 | `PATCH /courses/templates/{id}/rows/{row_id}` | advisor (owner) | edit template row (reuses shared row validator) |
 | `DELETE /courses/templates/{id}/rows/{row_id}` | advisor (owner) | delete row, cascades elective overrides, renumbers slots |
 | `GET /courses/templates/{id}/rows/{row_id}/impact` | advisor | calculate deletion impact (`overrides_count`, `cohorts_using_template`) |
-| `POST /audit/extract` | student/advisor (owner) | parse slip: regex first, Groq only for unparsed lines; saves results server-side |
+| `POST /audit/extract` | student/advisor (owner) | parse slip: rules first if tenant.slip_profile == 'utm' and confident (semester+session+courses+no unparsed); otherwise universal AI reader (ONE LLM call); pure guardrails check both; saves results server-side |
 | `POST /audit/submit-verification` | student | confirm/edit rows; server computes `is_altered` vs `original_courses` |
-| `POST /audit/finalize-approval` | advisor (own advisee) | write `academic_records` |
+| `POST /audit/finalize-approval` | advisor (own advisee) | write `academic_records` (supports per-course `session_semester` for multi-semester transcripts) |
 | `POST /audit/reject-document` | advisor (own advisee) | reject |
 | `POST /audit/purge-document` | backend | PDPA purge |
 | `POST /advising-logs/{log_id}/notify` | advisor | email student via Resend; no note text in email; 1/student/hour |
@@ -76,12 +76,16 @@ Sections 1–5 were written at v1.0.0 and are partly outdated (e.g. `registratio
 
 `document_id`/`file_path` access goes through `_load_authorized_document()` in `audit.py`.
 
-### 0.6 Slip parsing (UTM format, parser is generic-first)
-- SEMESTER and SESSION on separate lines; ST codes L=pass, G=fail, TD=withdrawn, UM=repeat, PK=special exam.
-- Summary: PNG (sem GPA), PNGK (CGPA), KK, KD, CE. Computed GPA is cross-checked against printed; mismatch = warning, never auto-correct.
+### 0.6 Slip parsing (Rules vs Universal AI Reader & Guardrails)
+- Zero-Waste execution: `tenants.slip_profile == 'utm'` triggers deterministic rule regex parser first.
+- If confident (semester and session detected, >=1 course parsed, 0 unparsed candidate lines), uses `source='rules'`.
+- If not confident or tenant has no rule profile (`slip_profile IS NULL`), routes to universal reader `source='ai'` (ONE LLM call to Groq/OpenAI client, JSON mode, temperature 0, 1 retry, input cap).
+- Pure guardrails (`engine/slip_validation.py`): grade in tenant scale, credits > 0 (decimal flagged), course code sanity, semester normalisation, recomputed GPA vs printed (tolerance 0.01), matric slip vs expected match (blocking warning "This slip may belong to someone else"). Guardrails never alter values; return warnings + needs_review.
+- Multi-semester transcripts: each course carries its own `session_semester` label preserved across verification and approval to persist attempts under their respective academic semesters.
+- Scanned slips without text layer return HTTP 422 ("Scanned slips aren't supported yet — please upload the original PDF from your student portal.").
 
 ### 0.7 Migrations (applied in order; never edit after applied)
-01–16 legacy (written against a drifted DB; staging is built from a prod schema dump instead). 17 tenant curriculum · 18 tenants · 19 advisor_invites · 20 RLS lockdown · 21 drop email advisor policies · 22 elective slots · 23 cohorts lockdown · 24 advising_logs v2 · 25 advising notifications · 26 grading scales · 27 record attempts · 28 roster view · 29 uploaded_documents lockdown · 30 storage + degree_audits RLS (**apply after push**). 31 template_courses category · 32 template_courses course_code text · 33 elective_assignments (4B) · 34 template_owner & auditing (4C) · 35 progress_indexes. From 30 on: apply to staging first, then prod.
+01–16 legacy (written against a drifted DB; staging is built from a prod schema dump instead). 17 tenant curriculum · 18 tenants · 19 advisor_invites · 20 RLS lockdown · 21 drop email advisor policies · 22 elective slots · 23 cohorts lockdown · 24 advising_logs v2 · 25 advising notifications · 26 grading scales · 27 record attempts · 28 roster view · 29 uploaded_documents lockdown · 30 storage + degree_audits RLS (**apply after push**). 31 template_courses category · 32 template_courses course_code text · 33 elective_assignments (4B) · 34 template_owner & auditing (4C) · 35 progress_indexes · 36 tenant_slip_profile (Universal slip reader foundation). From 30 on: apply to staging first, then prod.
 
 ### 0.8 Known gaps
 - `DegreeAuditView.tsx` has a UTM course-prefix regex. Old contest-registration code may remain in auth pages. `students.matric_no` global unique. Render free tier cold starts.

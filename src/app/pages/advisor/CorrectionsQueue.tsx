@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Check, XCircle, Clock, CheckCircle2, FileText, Calendar, Eye, X, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { Check, XCircle, Clock, CheckCircle2, FileText, Calendar, Eye, X, Plus, Trash2, AlertTriangle, Sparkles } from "lucide-react";
 import { db } from "../../../lib/supabase";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../context/AuthContext";
@@ -81,8 +81,9 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
     setManualGrade("A");
     setManualCredits(3);
     const ext = doc.extracted_data || {};
-    setSelectedSemester(ext.semester ? String(ext.semester) : "");
-    setSelectedSession(ext.academic_session || "");
+    const firstSem = Array.isArray(ext.semesters) && ext.semesters.length > 0 ? ext.semesters[0] : null;
+    setSelectedSemester(ext.semester ? String(ext.semester) : (firstSem?.semester_no ? String(firstSem.semester_no) : ""));
+    setSelectedSession(ext.academic_session || firstSem?.session || "");
   };
 
   const handleAddManualCourse = () => {
@@ -97,7 +98,8 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
       grade: manualGrade.trim().toUpperCase(),
       credit_hour: Number(manualCredits) || 3,
       credits: Number(manualCredits) || 3,
-      status: isPass(manualGrade, gradeScale) ? "Passed" : "Failed"
+      status: isPass(manualGrade, gradeScale) ? "Passed" : "Failed",
+      session_semester: selectedSemester && selectedSession.trim() ? `SEM ${selectedSemester} ${selectedSession.trim()}` : undefined,
     };
     setStagedCourses(prev => [...prev, newCourse]);
     setManualCode("");
@@ -188,7 +190,8 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
           credit_hour: Number(c.credit_hour ?? c.credits ?? 3) || 3,
           credits: Number(c.credits ?? c.credit_hour ?? 3) || 3,
           status: c.status || "Pass",
-          warning: c.warning
+          warning: c.warning,
+          session_semester: c.session_semester,
         }))
       });
 
@@ -297,14 +300,36 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
 
               <div className="w-1/2 p-6 overflow-y-auto bg-white flex flex-col justify-between">
                 <div>
-                  {/* GPA / CGPA Mismatch Warning at the top */}
-                  {activeAuditDoc?.extracted_data?.gpa_warning && (
-                    <div className="mb-4 p-3.5 bg-amber-50 border border-amber-300 rounded-lg flex items-start gap-2.5 text-amber-900 text-xs shadow-sm">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold block">Transcript Verification Warning</span>
-                        <span>{activeAuditDoc.extracted_data.gpa_warning}</span>
-                      </div>
+                  {/* AI Banner */}
+                  {activeAuditDoc?.extracted_data?.source === "ai" && (
+                    <div className="mb-4 p-3.5 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg flex items-center gap-2.5 text-xs font-medium">
+                      <Sparkles className="w-4 h-4 text-blue-800 shrink-0" />
+                      <span>Read by AI — please check every row carefully</span>
+                    </div>
+                  )}
+
+                  {/* Warnings above the table */}
+                  {activeAuditDoc?.extracted_data?.warnings && activeAuditDoc.extracted_data.warnings.length > 0 && (
+                    <div className="mb-4 space-y-2">
+                      {activeAuditDoc.extracted_data.warnings.map((w: string, idx: number) => {
+                        const isMatricMismatch = w.toLowerCase().includes("someone else");
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-3 rounded-lg border text-xs flex items-start gap-2.5 ${
+                              isMatricMismatch
+                                ? "bg-rose-50 border-rose-300 text-rose-900 font-semibold"
+                                : "bg-amber-50 border-amber-300 text-amber-900"
+                            }`}
+                          >
+                            <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${isMatricMismatch ? "text-rose-600" : "text-amber-600"}`} />
+                            <div>
+                              <span className="font-bold block">{isMatricMismatch ? "Matric Mismatch Alert (Approval Blocked)" : "Transcript Verification Warning"}</span>
+                              <span>{w}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -436,62 +461,76 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
                   )}
 
                   {/* Course Table or Empty Fallback */}
-                  {stagedCourses.length === 0 ? (
-                    <div className="p-8 text-center border-2 border-dashed border-amber-300 rounded-lg bg-amber-50/40">
-                      <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
-                      <p className="text-sm font-semibold text-gray-800">No courses extracted automatically</p>
-                      <p className="text-xs text-gray-500 mt-1 mb-4">
-                        PDF extraction found 0 course rows. Add courses manually using the button below to bypass PDF extraction failure.
-                      </p>
-                      <Button
-                        onClick={() => setShowAddForm(true)}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold"
-                      >
-                        <Plus className="w-4 h-4 mr-1.5" /> Add Course Manually
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <table className="w-full text-left">
-                        <thead className="bg-gray-50 border-b">
-                          <tr>
-                            <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Course Code</th>
-                            <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Course Name</th>
-                            <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Grade</th>
-                            <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Credits</th>
-                            <th className="px-2 py-3 text-xs font-semibold text-gray-500 uppercase text-center">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y text-xs">
-                          {stagedCourses.filter(Boolean).map((course: any, idx: number) => (
-                            <tr key={idx} className="hover:bg-slate-50/50">
-                              <td className="px-4 py-2.5 font-mono font-bold text-gray-900">
-                                <div>{course.course_code || "—"}</div>
-                                {course.warning && (
-                                  <div className="mt-1 flex items-start gap-1 text-[10px] font-sans font-normal text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 max-w-[200px] leading-tight">
-                                    <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
-                                    <span>{course.warning}</span>
-                                  </div>
-                                )}
-                              </td>
-                              <td className="px-4 py-2.5 text-gray-600 truncate max-w-[140px]">{course.course_name || course.course_code || "—"}</td>
-                              <td className="px-4 py-2.5 font-bold text-[#990033]">{course.grade || "N/A"}</td>
-                              <td className="px-4 py-2.5 font-mono">{course.credit_hour ?? course.credits ?? "—"}</td>
-                              <td className="px-2 py-2.5 text-center">
-                                <button
-                                  onClick={() => handleRemoveCourse(idx)}
-                                  className="text-gray-400 hover:text-rose-600 p-1 cursor-pointer"
-                                  title="Remove Course"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
+                  {(() => {
+                    const isMultiSem = Boolean(
+                      (activeAuditDoc?.extracted_data?.semesters && activeAuditDoc.extracted_data.semesters.length > 1) ||
+                      (stagedCourses && new Set(stagedCourses.map((c: any) => c.session_semester).filter(Boolean)).size > 1)
+                    );
+                    return stagedCourses.length === 0 ? (
+                      <div className="p-8 text-center border-2 border-dashed border-amber-300 rounded-lg bg-amber-50/40">
+                        <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                        <p className="text-sm font-semibold text-gray-800">No courses extracted automatically</p>
+                        <p className="text-xs text-gray-500 mt-1 mb-4">
+                          PDF extraction found 0 course rows. Add courses manually using the button below to bypass PDF extraction failure.
+                        </p>
+                        <Button
+                          onClick={() => setShowAddForm(true)}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold"
+                        >
+                          <Plus className="w-4 h-4 mr-1.5" /> Add Course Manually
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <table className="w-full text-left">
+                          <thead className="bg-gray-50 border-b">
+                            <tr>
+                              {isMultiSem && (
+                                <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Semester</th>
+                              )}
+                              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Course Code</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Course Name</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Grade</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Credits</th>
+                              <th className="px-2 py-3 text-xs font-semibold text-gray-500 uppercase text-center">Action</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                          </thead>
+                          <tbody className="divide-y text-xs">
+                            {stagedCourses.filter(Boolean).map((course: any, idx: number) => (
+                              <tr key={idx} className="hover:bg-slate-50/50">
+                                {isMultiSem && (
+                                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">
+                                    {course.session_semester || "—"}
+                                  </td>
+                                )}
+                                <td className="px-4 py-2.5 font-mono font-bold text-gray-900">
+                                  <div>{course.course_code || "—"}</div>
+                                  {course.warning && (
+                                    <div className="mt-1 flex items-start gap-1 text-[10px] font-sans font-normal text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 max-w-[200px] leading-tight">
+                                      <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                      <span>{course.warning}</span>
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5 text-gray-600 truncate max-w-[140px]">{course.course_name || course.course_code || "—"}</td>
+                                <td className="px-4 py-2.5 font-bold text-[#990033]">{course.grade || "N/A"}</td>
+                                <td className="px-4 py-2.5 font-mono">{course.credit_hour ?? course.credits ?? "—"}</td>
+                                <td className="px-2 py-2.5 text-center">
+                                  <button
+                                    onClick={() => handleRemoveCourse(idx)}
+                                    className="text-gray-400 hover:text-rose-600 p-1 cursor-pointer"
+                                    title="Remove Course"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="mt-8 pt-4 border-t border-gray-100 flex space-x-4">
@@ -503,13 +542,23 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
                   >
                     <XCircle className="w-4 h-4 mr-2" /> {isSaving ? "Rejecting..." : "Reject Document"}
                   </Button>
-                  <Button
-                    onClick={handleApprove}
-                    disabled={isSaving || stagedCourses.length === 0 || !selectedSemester || !selectedSession.trim()}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="w-4 h-4 mr-2" /> {isSaving ? "Saving..." : `Approve & Commit (${stagedCourses.length})`}
-                  </Button>
+                  {(() => {
+                    const hasMatricMismatch = Boolean(
+                      (activeAuditDoc?.extracted_data?.warnings || []).some((w: string) =>
+                        w.toLowerCase().includes("someone else")
+                      )
+                    );
+                    return (
+                      <Button
+                        onClick={handleApprove}
+                        disabled={isSaving || stagedCourses.length === 0 || !selectedSemester || !selectedSession.trim() || hasMatricMismatch}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        {isSaving ? "Saving..." : hasMatricMismatch ? "Blocked (Matric Mismatch)" : `Approve & Commit (${stagedCourses.length})`}
+                      </Button>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

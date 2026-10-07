@@ -3,7 +3,13 @@
 Newest first. Tag format `v0.x-name`. Note: git tags for these milestones are not created yet; create them on the matching commits.
 
 ## Unreleased
-- (nothing yet)
+- Universal transcript slip reader (multi-university foundation, Roadmap 5):
+  - Migration 36: `tenants.slip_profile` (TEXT NULL) to support university rule parsers ('utm') vs universal AI reader (NULL).
+  - Backend universal reader (`backend/app/engine/universal_reader.py`): ONE LLM call to Groq/OpenAI-compatible client with strict academic JSON schema (`semesters`, `courses`, `printed_gpa`, `printed_cgpa`, `matric_no`), input size cap, timeout, 1 retry, temperature 0. Fails loud with clear error if API key is missing.
+  - Zero-Waste decision in `POST /audit/extract`: runs rule parser if `slip_profile == 'utm'` and confident; otherwise routes to universal reader (`source='ai'`). Scanned PDFs with no extractable text layer fail with HTTP 422 ("Scanned slips aren't supported yet — please upload the original PDF from your student portal.").
+  - Pure guardrails (`backend/app/engine/slip_validation.py`): checks grade scale existence, positive credits (flags decimal credits as unsupported), course code format sanity, semester normalisation, GPA recalculation cross-check (0.01 tolerance), and student matric cross-match ("This slip may belong to someone else" blocking warning). Never alters values.
+  - Multi-semester transcripts: courses carry per-course `session_semester` across student verification and advisor approval to persist attempts under their respective academic semesters.
+  - Frontend verification (`StudentPortal.tsx`) & corrections (`CorrectionsQueue.tsx`): display "Read by AI" banner when `source='ai'`, warning alerts above tables, matric mismatch blocks submission/approval, and per-row semester column rendered for multi-semester transcripts.
 
 ## v0.7-template-editor (2026-10-02)
 - Roadmap 4 complete: requirement engine (4A, migs 31–32), manual elective override (4B, mig 33), progress perf (mig 35), template editor (4C, mig 34).

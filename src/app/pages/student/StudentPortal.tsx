@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   GraduationCap, Upload, FileText, LogOut, Menu, X, 
   FileUp, BarChart, CheckCircle, Target, Edit3, AlertTriangle, Clock,
-  Loader2, CheckCircle2, ShieldAlert, MessageSquare
+  Loader2, CheckCircle2, ShieldAlert, MessageSquare, Sparkles
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button, Input } from "../../components/ui";
@@ -750,62 +750,120 @@ export function StudentPortal() {
               </div>
               
               <div className="p-6 overflow-y-auto flex-1 space-y-4">
-                <div className="bg-blue-50 border border-blue-200 text-blue-900 text-xs p-4 rounded-lg flex items-start">
-                  <AlertTriangle className="w-4 h-4 mr-2.5 shrink-0 mt-0.5 text-blue-900" />
+                {stagedData?.source === "ai" && (
+                  <div className="bg-blue-50 border border-blue-200 text-blue-900 text-xs p-3.5 rounded-lg flex items-center font-medium">
+                    <Sparkles className="w-4 h-4 mr-2.5 shrink-0 text-blue-800" />
+                    <span>Read by AI — please check every row carefully</span>
+                  </div>
+                )}
+
+                {stagedData?.warnings && stagedData.warnings.length > 0 && (
+                  <div className="space-y-2">
+                    {stagedData.warnings.map((w: string, idx: number) => {
+                      const isMatricMismatch = w.toLowerCase().includes("someone else");
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-3 rounded-lg border text-xs flex items-start ${
+                            isMatricMismatch
+                              ? "bg-rose-50 border-rose-300 text-rose-900 font-semibold"
+                              : "bg-amber-50 border-amber-300 text-amber-900"
+                          }`}
+                        >
+                          <AlertTriangle className={`w-4 h-4 mr-2 shrink-0 mt-0.5 ${isMatricMismatch ? "text-rose-600" : "text-amber-600"}`} />
+                          <div>
+                            <span className="font-bold block">{isMatricMismatch ? "Matric Mismatch Alert (Submission Blocked)" : "Transcript Warning"}</span>
+                            <span>{w}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="bg-blue-50/60 border border-blue-100 text-blue-900 text-xs p-3.5 rounded-lg flex items-start">
+                  <AlertTriangle className="w-4 h-4 mr-2.5 shrink-0 mt-0.5 text-blue-800" />
                   <p className="leading-relaxed">
-                    Check the AI's extracted course codes and grades. Correct any discrepancies before submitting to your academic advisor for formal approval.
+                    Check the extracted course codes and grades. Correct any discrepancies before submitting to your academic advisor for formal approval.
                   </p>
                 </div>
 
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-left">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Course Code</th>
-                        <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Grade</th>
-                        <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Credits</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {(stagedData?.courses || []).map((course: any, index: number) => (
-                        <tr key={index} className="hover:bg-gray-50/50">
-                          <td className="px-4 py-2">
-                            <Input 
-                              value={course?.course_code || ""} 
-                              onChange={(e) => handleStagedDataChange(index, "course_code", e.target.value)} 
-                              className="font-mono text-sm max-w-[140px] bg-gray-50 border-gray-200 focus:ring-2 focus:ring-blue-900 focus:border-transparent text-gray-900" 
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <Input 
-                              value={course?.grade || ""} 
-                              onChange={(e) => handleStagedDataChange(index, "grade", e.target.value)} 
-                              className="font-bold text-sm max-w-[80px] bg-gray-50 border-gray-200 focus:ring-2 focus:ring-blue-900 focus:border-transparent text-gray-900 uppercase" 
-                            />
-                          </td>
-                          <td className="px-4 py-2 font-mono text-sm text-gray-700">{course?.credit_hour ?? course?.credits ?? 0}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {(() => {
+                  const isMultiSem = Boolean(
+                    (stagedData?.semesters && stagedData.semesters.length > 1) ||
+                    (stagedData?.courses && new Set(stagedData.courses.map((c: any) => c.session_semester).filter(Boolean)).size > 1)
+                  );
+                  return (
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead className="bg-gray-50 border-b border-gray-200">
+                          <tr>
+                            {isMultiSem && (
+                              <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Semester</th>
+                            )}
+                            <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Course Code</th>
+                            <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Grade</th>
+                            <th className="px-4 py-2.5 text-xs font-semibold text-gray-600 uppercase">Credits</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {(stagedData?.courses || []).map((course: any, index: number) => (
+                            <tr key={index} className="hover:bg-gray-50/50">
+                              {isMultiSem && (
+                                <td className="px-4 py-2 font-mono text-xs text-gray-700">
+                                  {course?.session_semester || "—"}
+                                </td>
+                              )}
+                              <td className="px-4 py-2">
+                                <Input 
+                                  value={course?.course_code || ""} 
+                                  onChange={(e) => handleStagedDataChange(index, "course_code", e.target.value)} 
+                                  className="font-mono text-sm max-w-[140px] bg-gray-50 border-gray-200 focus:ring-2 focus:ring-blue-900 focus:border-transparent text-gray-900" 
+                                />
+                              </td>
+                              <td className="px-4 py-2">
+                                <Input 
+                                  value={course?.grade || ""} 
+                                  onChange={(e) => handleStagedDataChange(index, "grade", e.target.value)} 
+                                  className="font-bold text-sm max-w-[80px] bg-gray-50 border-gray-200 focus:ring-2 focus:ring-blue-900 focus:border-transparent text-gray-900 uppercase" 
+                                />
+                              </td>
+                              <td className="px-4 py-2 font-mono text-sm text-gray-700">{course?.credit_hour ?? course?.credits ?? 0}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end space-x-3">
-                <Button 
-                  onClick={handleConfirmAndSave} 
-                  disabled={isSaving} 
-                  className="bg-blue-900 hover:bg-blue-800 text-white font-medium rounded-lg shadow-sm transition-colors text-sm px-4 py-2 cursor-pointer"
-                >
-                  {isSaving ? (
-                    "Submitting..."
-                  ) : (
-                    <>
-                      <CheckCircle className="w-4 h-4 mr-2" />
-                      Confirm &amp; Submit
-                    </>
-                  )}
-                </Button>
+                {(() => {
+                  const hasMatricMismatch = Boolean(
+                    (stagedData?.warnings || []).some((w: string) =>
+                      w.toLowerCase().includes("someone else")
+                    )
+                  );
+                  return (
+                    <Button 
+                      onClick={handleConfirmAndSave} 
+                      disabled={isSaving || hasMatricMismatch} 
+                      className="bg-blue-900 hover:bg-blue-800 text-white font-medium rounded-lg shadow-sm transition-colors text-sm px-4 py-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSaving ? (
+                        "Submitting..."
+                      ) : hasMatricMismatch ? (
+                        "Submission Blocked (Matric Mismatch)"
+                      ) : (
+                        <>
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Confirm &amp; Submit
+                        </>
+                      )}
+                    </Button>
+                  );
+                })()}
               </div>
             </motion.div>
           </div>

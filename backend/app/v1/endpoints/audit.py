@@ -42,7 +42,10 @@ try:
     from app.engine.grading import load_scale, GradingScale, normalize_semester, select_attempts_by_repeat_policy
     from app.engine.graph_resolver import PrerequisiteGraphResolver
     from app.engine.llm_fallback import MicroLLMFallback
+    from app.engine.universal_reader import extract_with_llm
+    from app.engine.slip_validation import validate_slip
     from app.engine.progress import compute_progress
+    from app.core.config import settings
     from app.core.supabase_client import SupabaseService
     from app.core.auth import verify_advisor_jwt
 except ImportError:
@@ -69,7 +72,10 @@ except ImportError:
     from backend.app.engine.grading import load_scale, GradingScale, normalize_semester, select_attempts_by_repeat_policy
     from backend.app.engine.graph_resolver import PrerequisiteGraphResolver
     from backend.app.engine.llm_fallback import MicroLLMFallback
+    from backend.app.engine.universal_reader import extract_with_llm
+    from backend.app.engine.slip_validation import validate_slip
     from backend.app.engine.progress import compute_progress
+    from backend.app.core.config import settings
     from backend.app.core.supabase_client import SupabaseService
     from backend.app.core.auth import verify_advisor_jwt
 
@@ -109,6 +115,25 @@ def _load_repeat_policy(tenant_id: str) -> str:
     if not policy:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Tenant '{tenant_id}' has no repeat_policy configured.")
     return policy
+
+
+def _load_tenant_slip_profile(tenant_id: str) -> Optional[str]:
+    """Loads tenant slip_profile ('utm' vs None for universal reader)."""
+    import httpx
+    def _q():
+        return supabase_svc.client.table("tenants").select("slip_profile").eq("id", tenant_id).limit(1).execute()
+    try:
+        try:
+            res = _q()
+        except httpx.TransportError:
+            res = _q()
+        if res and res.data and len(res.data) > 0:
+            return res.data[0].get("slip_profile")
+    except Exception as e:
+        logger.warning(f"Could not load tenant slip_profile: {e}")
+    return None
+
+
 supabase_svc = SupabaseService()
 
 
@@ -446,69 +471,210 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
 
     if not raw_lines:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Transcript PDF is empty or contains non-extractable scanned raster images."
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Scanned slips aren't supported yet — please upload the original PDF from your student portal."
         )
 
-    # 2b. Load tenant grading scale & parse
+    # 2b. Load tenant grading scale & slip profile
     tenant_id = _extract_tenant_id(jwt_payload)
+    slip_profile = _load_tenant_slip_profile(tenant_id)
+    expected_matric = doc.get("matric_no")
+
     try:
         scale = load_scale(tenant_id, client=supabase_svc.client)
-
-        # 3. Regex Parsing
-        metadata, parsed_courses, unparsed_lines = MalaysianTranscriptParser.parse_transcript_lines(raw_lines, scale=scale)
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(ve)
         )
 
-    # 4. Micro-LLM Fallback for ambiguous lines
-    if unparsed_lines:
-        ai_parsed = llm_fallback.parse_ambiguous_lines(unparsed_lines)
-        if ai_parsed:
-            parsed_courses.extend(ai_parsed)
+    use_rules = False
+    rule_metadata: Dict[str, Any] = {}
+    rule_courses = []
 
-    # 5. Build Structured Result
-    courses_payload = [
-        {
-            "course_code": c.course_code,
-            "course_name": c.course_name,
-            "grade": c.grade,
-            "credit_hour": c.credits,
-            "credits": c.credits,
-            "status": c.status,
-            "warning": c.warning
+    if slip_profile == "utm":
+        try:
+            rule_metadata, rule_courses, unparsed_lines = MalaysianTranscriptParser.parse_transcript_lines(raw_lines, scale=scale)
+            has_sem = rule_metadata.get("semester") is not None
+            has_sess = bool(rule_metadata.get("academic_session"))
+            has_courses = len(rule_courses) >= 1
+            no_unparsed = len(unparsed_lines) == 0
+
+            if has_sem and has_sess and has_courses and no_unparsed:
+                use_rules = True
+        except Exception as e:
+            logger.warning(f"[Extract] Rule parser error: {e}")
+            use_rules = False
+
+    if use_rules:
+        source = "rules"
+        model = None
+        sem_num = rule_metadata.get("semester")
+        session_name = rule_metadata.get("academic_session")
+        try:
+            norm_sem = normalize_semester(f"SEM {sem_num} {session_name}")
+        except Exception:
+            norm_sem = f"SEM {sem_num} {session_name}"
+
+        courses_payload = [
+            {
+                "course_code": c.course_code,
+                "course_name": c.course_name,
+                "grade": c.grade,
+                "credit_hour": c.credits,
+                "credits": c.credits,
+                "status": c.status,
+                "warning": c.warning,
+                "session_semester": c.semester or norm_sem,
+                "is_ai_parsed": False,
+            }
+            for c in rule_courses
+        ]
+
+        semesters_list = [
+            {
+                "semester_no": sem_num,
+                "session": session_name,
+                "courses": courses_payload,
+                "printed_gpa": rule_metadata.get("png"),
+                "printed_cgpa": rule_metadata.get("pngk"),
+            }
+        ]
+        student_name = rule_metadata.get("student_name")
+        matric_number = rule_metadata.get("matric_number")
+        printed_gpa = rule_metadata.get("png")
+        printed_cgpa = rule_metadata.get("pngk")
+        kk_all_sem = rule_metadata.get("kk_all_sem")
+        kd_all_sem = rule_metadata.get("kd_all_sem")
+        initial_warnings = list(rule_metadata.get("warnings", []))
+    else:
+        # Universal AI reader path
+        source = "ai"
+        model = settings.LLM_MODEL
+        full_text = "\n".join(raw_lines)
+        tenant_ctx = {
+            "tenant_id": tenant_id,
+            "valid_grades": list(scale._by_grade.keys()),
         }
-        for c in parsed_courses
-    ]
+        try:
+            ai_data = extract_with_llm(full_text, tenant_ctx)
+        except HTTPException:
+            raise
+        except Exception as ai_err:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Universal slip reader failed: {ai_err}",
+            )
 
-    session_name = metadata.get("academic_session")
-    sem_num = metadata.get("semester")
-    if not session_name or not sem_num:
-        if metadata.get("semesters_found"):
-            first_sem = metadata["semesters_found"][0]
-            parts = first_sem.split()
-            if len(parts) >= 2 and parts[1].isdigit():
-                sem_num = int(parts[1])
-            if len(parts) >= 3:
-                session_name = parts[2]
+        semesters_data = ai_data.get("semesters", [])
+        matric_number = ai_data.get("matric_no")
+        student_name = None
+
+        courses_payload = []
+        semesters_list = []
+
+        for sem_obj in semesters_data:
+            s_num = sem_obj.get("semester_no", 1)
+            s_sess = sem_obj.get("session", "")
+            try:
+                norm_s = normalize_semester(f"SEM {s_num} {s_sess}")
+            except Exception:
+                norm_s = f"SEM {s_num} {s_sess}"
+
+            sem_courses_payload = []
+            for c in sem_obj.get("courses", []):
+                c_code = c.get("code", "").replace(" ", "").upper()
+                c_grade = c.get("grade", "").strip().upper()
+                c_creds = c.get("credits", 3)
+
+                try:
+                    is_p = scale.is_pass(c_grade, c_code)
+                    in_cgpa = scale.counts_in_cgpa(c_grade, c_code)
+                    as_comp = scale.counts_as_completed(c_grade, c_code)
+                    if is_p and not in_cgpa and as_comp:
+                        c_status = "Exempted"
+                    elif is_p:
+                        c_status = "Passed"
+                    elif c_grade in {"TD", "TS"}:
+                        c_status = "In-Progress"
+                    else:
+                        c_status = "Failed"
+                except Exception:
+                    c_status = "Passed" if c_grade in {"A+", "A", "A-", "B+", "B", "B-", "C+", "C"} else "Failed"
+
+                c_creds_val = int(c_creds) if isinstance(c_creds, (int, float)) and float(c_creds).is_integer() else c_creds
+
+                item_dict = {
+                    "course_code": c_code,
+                    "course_name": c.get("name", c_code),
+                    "grade": c_grade,
+                    "credit_hour": c_creds_val,
+                    "credits": c_creds_val,
+                    "status": c_status,
+                    "warning": None,
+                    "session_semester": norm_s,
+                    "is_ai_parsed": True,
+                }
+                sem_courses_payload.append(item_dict)
+                courses_payload.append(item_dict)
+
+            semesters_list.append({
+                "semester_no": s_num,
+                "session": s_sess,
+                "courses": sem_courses_payload,
+                "printed_gpa": sem_obj.get("printed_gpa"),
+                "printed_cgpa": sem_obj.get("printed_cgpa"),
+            })
+
+        if semesters_list:
+            sem_num = semesters_list[0]["semester_no"]
+            session_name = semesters_list[0]["session"]
+            printed_gpa = semesters_list[0]["printed_gpa"]
+            printed_cgpa = semesters_list[0]["printed_cgpa"]
+        else:
+            sem_num = None
+            session_name = None
+            printed_gpa = None
+            printed_cgpa = None
+
+        kk_all_sem = None
+        kd_all_sem = None
+        initial_warnings = []
+
+    # Run Guardrails on result
+    guardrail_warnings, needs_review = validate_slip(
+        {
+            "semesters": semesters_list,
+            "matric_no": matric_number,
+        },
+        scale=scale,
+        expected_matric=expected_matric,
+    )
+    for w in guardrail_warnings:
+        if w not in initial_warnings:
+            initial_warnings.append(w)
+
+    gpa_warning = next((w for w in initial_warnings if "GPA mismatch" in w), None)
 
     extracted_data = {
+        "source": source,
+        "model": model,
+        "warnings": initial_warnings,
+        "needs_review": needs_review or len(initial_warnings) > 0,
+        "semesters": semesters_list,
         "academic_session": session_name,
         "semester": sem_num,
         "courses": courses_payload,
-        "matric_number": metadata.get("matric_number"),
-        "student_name": metadata.get("student_name"),
+        "matric_number": matric_number,
+        "student_name": student_name,
         "fraud_flag": is_fraudulent,
-        "png": metadata.get("png"),
-        "pngk": metadata.get("pngk"),
-        "gpa": metadata.get("png"),
-        "cgpa": metadata.get("pngk"),
-        "kk_all_sem": metadata.get("kk_all_sem"),
-        "kd_all_sem": metadata.get("kd_all_sem"),
-        "gpa_warning": metadata.get("gpa_warning"),
-        "warnings": metadata.get("warnings", [])
+        "png": printed_gpa,
+        "pngk": printed_cgpa,
+        "gpa": printed_gpa,
+        "cgpa": printed_cgpa,
+        "kk_all_sem": kk_all_sem,
+        "kd_all_sem": kd_all_sem,
+        "gpa_warning": gpa_warning,
     }
 
     # 6. Persist server-side (the browser never writes extracted grades)
@@ -528,6 +694,7 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save extracted data: {update_err}",
         )
+
 
     return ExtractPDFResponse(success=True, data=extracted_data)
 
