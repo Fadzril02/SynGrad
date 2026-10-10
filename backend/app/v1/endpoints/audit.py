@@ -906,7 +906,7 @@ async def finalize_approval(
                 print(f"[Purge Path Resolution Warning] {doc_fetch_err}")
 
         if target_path and target_path not in {"", "[PURGED]"}:
-            _bucket = "academic-slips" if "academic-slips" in target_path else "transcripts"
+            _bucket = "academic-slips"  # the only slip bucket; stored paths look like "slips/<matric>_<ts>.pdf"
             supabase_svc.delete_file_from_storage(
                 bucket_name=_bucket,
                 file_path=target_path

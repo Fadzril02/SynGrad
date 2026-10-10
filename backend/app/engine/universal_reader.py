@@ -19,6 +19,28 @@ logger = logging.getLogger("syngrad.universal_reader")
 
 MAX_INPUT_CHAR_LIMIT = 20000
 
+
+# --- PDPA: never send or keep national ID / passport numbers -----------------
+# Malaysian NRIC (YYMMDD-PB-###G, with or without dashes/spaces) and any value
+# written after an ID/passport label are masked BEFORE text leaves our server.
+_NRIC_RE = re.compile(r"\b\d{6}[-\s]?\d{2}[-\s]?\d{4}\b")
+_ID_LABEL_RE = re.compile(
+    r"(?im)\b(NO\.?[ \t]*K\/?P|K\/?P|KAD[ \t]+PENGENALAN|MY[ \t]*KAD|I\/?C(?:[ \t]*NO\.?)?|NRIC|"
+    r"IDENTITY[ \t]+CARD(?:[ \t]*NO\.?)?|PASS?PORT(?:[ \t]*NO\.?)?)([ \t]*[:.]?[ \t]*)((?=(?:[A-Z\- ]*\d){5})[A-Z0-9][A-Z0-9\- ]{4,19}[A-Z0-9])(?=[ \t]*$|[ \t]{2,})"
+)
+
+
+def redact_personal_ids(text: str) -> str:
+    """Mask NRIC/passport numbers. Matric numbers are NOT touched (needed for the ownership check)."""
+    if not text:
+        return text
+    text = _ID_LABEL_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED-ID]", text)
+    return _NRIC_RE.sub("[REDACTED-ID]", text)
+
+
+def looks_like_national_id(value: Optional[str]) -> bool:
+    return bool(value) and bool(_NRIC_RE.fullmatch(str(value).strip()))
+
 UNIVERSAL_SYSTEM_PROMPT = """You are an academic transcript data extractor.
 Your task is to accurately extract course records, semester details, printed GPA/CGPA, and student registration/matriculation number from the provided academic transcript text.
 
@@ -52,7 +74,7 @@ Extraction Rules:
 3. "session" must be the academic year format "YYYY/YYYY" (e.g. "2024/2025" or "2023/2024").
 4. "credits" must be a positive number.
 5. "printed_gpa" and "printed_cgpa" are the GPA and CGPA values explicitly printed on the slip for that semester (decimal number), or null if not printed.
-6. "matric_no" is the student ID/matric number if found, or null.
+6. "matric_no" is the student matric/registration number if found, or null. NEVER output a national ID card (IC/NRIC/MyKad) or passport number anywhere; ignore them completely.
 7. Return raw JSON only with NO markdown fences, NO preamble, and NO extra keys.
 """
 
@@ -85,7 +107,7 @@ def extract_with_llm(text: str, tenant_ctx: Optional[Dict[str, Any]] = None) -> 
     valid_grades_context = ", ".join(valid_grades) if valid_grades else "Standard letter grades (A-F, plus/minus, pass/fail codes)"
 
     system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(valid_grades_context=valid_grades_context)
-    capped_text = text[:MAX_INPUT_CHAR_LIMIT]
+    capped_text = redact_personal_ids(text)[:MAX_INPUT_CHAR_LIMIT]
 
     client = OpenAI(
         api_key=settings.LLM_API_KEY,
@@ -197,6 +219,8 @@ def extract_with_llm(text: str, tenant_ctx: Optional[Dict[str, Any]] = None) -> 
 
     raw_matric = parsed.get("matric_no") or parsed.get("matric_number")
     matric_no = str(raw_matric).strip().upper() if raw_matric else None
+    if looks_like_national_id(matric_no):
+        matric_no = None  # never keep an IC number, even if the model returned one
 
     return {
         "semesters": conformed_semesters,

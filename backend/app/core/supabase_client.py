@@ -114,7 +114,11 @@ class SupabaseService:
                 .removeprefix("academic-slips/")
                 .removeprefix("/")
             )
-            self.client.storage.from_(bucket_name).remove([clean_path])
+            removed = self.client.storage.from_(bucket_name).remove([clean_path])
+            if not removed:
+                # Storage returns the list of deleted objects; empty = nothing was deleted (wrong bucket/path).
+                print(f"[Auto-Purge ERROR] Nothing deleted for '{clean_path}' in bucket '{bucket_name}' — file may still exist (PDPA).")
+                return False
             print(f"[Auto-Purge] Deleted '{clean_path}' from bucket '{bucket_name}'.")
             return True
         except Exception as e:
@@ -460,8 +464,8 @@ class SupabaseService:
 
         # 4. Delete file from Supabase Storage
         clean_path = file_path.removeprefix("transcripts/").removeprefix("academic-slips/").removeprefix("/")
-        bucket = "academic-slips" if "academic-slips" in file_path else "transcripts"
-        
+        bucket = "academic-slips"  # the only slip bucket
+
         storage_deleted = False
         try:
             self.client.storage.from_(bucket).remove([clean_path])
