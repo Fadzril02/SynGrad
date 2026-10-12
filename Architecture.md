@@ -63,7 +63,8 @@ Sections 1–5 were written at v1.0.0 and are partly outdated (e.g. `registratio
 | `PATCH /courses/templates/{id}/rows/{row_id}` | advisor (owner) | edit template row (reuses shared row validator) |
 | `DELETE /courses/templates/{id}/rows/{row_id}` | advisor (owner) | delete row, cascades elective overrides, renumbers slots |
 | `GET /courses/templates/{id}/rows/{row_id}/impact` | advisor | calculate deletion impact (`overrides_count`, `cohorts_using_template`) |
-| `POST /audit/extract` | student/advisor (owner) | parse slip: rules first if tenant.slip_profile == 'utm' and confident (semester+session+courses+no unparsed); otherwise universal AI reader (ONE LLM call); pure guardrails check both; saves results server-side |
+| `POST /audit/extract` | student/advisor (owner) | parse slip: rules first if tenant.slip_profile == 'utm' and confident (semester+session+courses+no unparsed); universal AI reader for non-rules text (`source='ai'`); PyMuPDF vision LLM for scanned PDFs (`source='ai_scan'`); pure guardrails check all; saves results server-side |
+| `POST /lab/extract` | staging staff | Slip Lab diagnostic testbed: runs exact same extract pipeline without persisting anything; staging & `LAB_ALLOWED_EMAILS` only |
 | `POST /audit/submit-verification` | student | confirm/edit rows; server computes `is_altered` vs `original_courses` |
 | `POST /audit/finalize-approval` | advisor (own advisee) | write `academic_records` (supports per-course `session_semester` for multi-semester transcripts) |
 | `POST /audit/reject-document` | advisor (own advisee) | reject |
@@ -76,19 +77,31 @@ Sections 1–5 were written at v1.0.0 and are partly outdated (e.g. `registratio
 
 `document_id`/`file_path` access goes through `_load_authorized_document()` in `audit.py`.
 
-### 0.6 Slip parsing (Rules vs Universal AI Reader & Guardrails)
+### 0.6 Slip parsing (Rules vs Universal AI Reader vs Scanned Slip Vision & Guardrails)
 - Zero-Waste execution: `tenants.slip_profile == 'utm'` triggers deterministic rule regex parser first.
 - If confident (semester and session detected, >=1 course parsed, 0 unparsed candidate lines), uses `source='rules'`.
 - If not confident or tenant has no rule profile (`slip_profile IS NULL`), routes to universal reader `source='ai'` (ONE LLM call to Groq/OpenAI client, JSON mode, temperature 0, 1 retry, input cap).
+- Scanned slips (no text layer): rendered to PNG via PyMuPDF (~200 dpi, long side <= 2000px, max 6 pages). Routed to vision-capable model (`source='ai_scan'`) using setting `LLM_VISION_MODEL` (e.g. Groq `llama-3.2-11b-vision-preview`).
+  - Limits: >6 pages returns HTTP 422 ("Please upload at most 6 pages"). Timeout + 1 retry per call.
+  - If `LLM_VISION_MODEL` is missing/not configured: keeps HTTP 422 ("Scanned slips aren't supported yet — please upload the original PDF from your student portal."). No silent fallback.
+  - Multi-page merge: semesters merged across pages by `(semester_no, session)`.
+  - Empty page warning: warning "Page N could not be read" added for any page with 0 courses.
+  - PDPA Privacy: prompt instructs "never output national ID (IC/NRIC/MyKad) or passport numbers". Post-filtering drops/nulls any value matching `looks_like_national_id()`, never places IC in `matric_no`, and redacts IC occurrences in names/codes. Rendered images exist in memory only and are never saved or stored.
+  - Frontend banner for `ai_scan`: "Read from a scanned slip by AI — scans can be misread, please check every row carefully."
 - Pure guardrails (`engine/slip_validation.py`): grade in tenant scale, credits > 0 (decimal flagged), course code sanity, semester normalisation, recomputed GPA vs printed (tolerance 0.01), matric slip vs expected match (blocking warning "This slip may belong to someone else"). Guardrails never alter values; return warnings + needs_review.
 - Multi-semester transcripts: each course carries its own `session_semester` label preserved across verification and approval to persist attempts under their respective academic semesters.
-- Scanned slips without text layer return HTTP 422 ("Scanned slips aren't supported yet — please upload the original PDF from your student portal.").
 
-### 0.7 Migrations (applied in order; never edit after applied)
+### 0.7 Slip Lab (Staging-Only Sandbox)
+- Backend: `POST /lab/extract` (multipart: PDF file + `tenant_id`). Runs the exact same extract pipeline (rules / ai / ai_scan + guardrails + PDPA redaction). Returns `{source, model, semesters, courses, warnings, needs_review, timing}`. Zero persistence: no DB writes, no storage uploads.
+- Access control: active only when `settings.ENVIRONMENT == "staging"` (otherwise 404), and requires JWT email in `settings.LAB_ALLOWED_EMAILS` (comma-separated, otherwise 403).
+- Frontend: route `/lab`, hidden unless `ENVIRONMENT` is staging. Interactive UI with tenant selector, PDF upload, path badge, warnings, result table, and collapsible raw JSON viewer.
+
+### 0.8 Migrations (applied in order; never edit after applied)
 01–16 legacy (written against a drifted DB; staging is built from a prod schema dump instead). 17 tenant curriculum · 18 tenants · 19 advisor_invites · 20 RLS lockdown · 21 drop email advisor policies · 22 elective slots · 23 cohorts lockdown · 24 advising_logs v2 · 25 advising notifications · 26 grading scales · 27 record attempts · 28 roster view · 29 uploaded_documents lockdown · 30 storage + degree_audits RLS (**apply after push**). 31 template_courses category · 32 template_courses course_code text · 33 elective_assignments (4B) · 34 template_owner & auditing (4C) · 35 progress_indexes · 36 tenant_slip_profile (Universal slip reader foundation). From 30 on: apply to staging first, then prod.
 
-### 0.8 Known gaps
+### 0.9 Known gaps & Privacy-Policy TODO
 - `DegreeAuditView.tsx` has a UTM course-prefix regex. Old contest-registration code may remain in auth pages. `students.matric_no` global unique. Render free tier cold starts.
+- **Privacy-policy TODO**: AI reads uploaded slip text/images; students should cover IC before scanning.
 
 ---
 

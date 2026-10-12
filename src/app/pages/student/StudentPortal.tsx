@@ -757,6 +757,13 @@ export function StudentPortal() {
                   </div>
                 )}
 
+                {stagedData?.source === "ai_scan" && (
+                  <div className="bg-blue-50 border border-blue-200 text-blue-900 text-xs p-3.5 rounded-lg flex items-center font-medium">
+                    <Sparkles className="w-4 h-4 mr-2.5 shrink-0 text-blue-800" />
+                    <span>Read from a scanned slip by AI — scans can be misread, please check every row carefully.</span>
+                  </div>
+                )}
+
                 {stagedData?.warnings && stagedData.warnings.length > 0 && (
                   <div className="space-y-2">
                     {stagedData.warnings.map((w: string, idx: number) => {

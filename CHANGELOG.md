@@ -3,6 +3,19 @@
 Newest first. Tag format `v0.x-name`. Note: git tags for these milestones are not created yet; create them on the matching commits.
 
 ## Unreleased
+- Scanned transcript slip support (vision model integration, follow-up to universal slip reader):
+  - In-memory PyMuPDF page rendering (~200 dpi, long side <= 2000px, max 6 pages) for PDFs without extractable text layer.
+  - Vision model call using `LLM_VISION_MODEL` (Groq `llama-3.2-11b-vision-preview` / OpenAI compatible), strict academic JSON schema, temperature 0, timeout + 1 retry. `source='ai_scan'`.
+  - Limits & fail-loud semantics: >6 pages returns HTTP 422 ("Please upload at most 6 pages"); missing `LLM_VISION_MODEL` preserves HTTP 422 ("Scanned slips aren't supported yet — please upload the original PDF from your student portal.").
+  - Multi-page merge: merges courses and printed GPA/CGPA across pages grouped by semester number and academic session.
+  - Guardrail warning: adds "Page N could not be read" warning for any page with 0 courses detected.
+  - PDPA Privacy protection: prompt instructs never to output national ID (IC/NRIC/MyKad) or passport numbers; post-filter drops/nulls any value matching `looks_like_national_id()`, never places IC in `matric_no`, and redacts IC occurrences in names/codes. Rendered images are processed in-memory only and never persisted to disk or storage.
+  - User feedback banner for `ai_scan`: "Read from a scanned slip by AI — scans can be misread, please check every row carefully."
+  - Privacy-policy TODO added: "AI reads uploaded slip text/images; students should cover IC before scanning".
+- Slip Lab (staging-only testbed):
+  - Backend `POST /lab/extract` (multipart: PDF + tenant_id): runs the exact extraction pipeline (rules / ai / ai_scan + guardrails + PDPA redaction) with zero persistence (no DB writes, no storage uploads). Returns `{source, model, semesters, courses, warnings, needs_review, timing}`.
+  - Access control: active only when `settings.ENVIRONMENT == "staging"` (otherwise 404), and requires authenticated user email in `settings.LAB_ALLOWED_EMAILS` (comma-separated, otherwise 403).
+  - Frontend route `/lab`: hidden unless `ENVIRONMENT` is staging. Interactive dashboard to select tenant from `tenants`, upload PDF, view extraction route path, timings, warnings, result courses table, and collapsible raw JSON.
 - Universal transcript slip reader (multi-university foundation, Roadmap 5):
   - Migration 36: `tenants.slip_profile` (TEXT NULL) to support university rule parsers ('utm') vs universal AI reader (NULL).
   - Backend universal reader (`backend/app/engine/universal_reader.py`): ONE LLM call to Groq/OpenAI-compatible client with strict academic JSON schema (`semesters`, `courses`, `printed_gpa`, `printed_cgpa`, `matric_no`), input size cap, timeout, 1 retry, temperature 0. Fails loud with clear error if API key is missing.

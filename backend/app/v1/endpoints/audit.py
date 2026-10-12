@@ -42,7 +42,8 @@ try:
     from app.engine.grading import load_scale, GradingScale, normalize_semester, select_attempts_by_repeat_policy
     from app.engine.graph_resolver import PrerequisiteGraphResolver
     from app.engine.llm_fallback import MicroLLMFallback
-    from app.engine.universal_reader import extract_with_llm
+    from app.engine.universal_reader import extract_with_llm, looks_like_national_id, redact_personal_ids
+    from app.engine.scanned_reader import extract_scanned_transcript
     from app.engine.slip_validation import validate_slip
     from app.engine.progress import compute_progress
     from app.core.config import settings
@@ -72,7 +73,8 @@ except ImportError:
     from backend.app.engine.grading import load_scale, GradingScale, normalize_semester, select_attempts_by_repeat_policy
     from backend.app.engine.graph_resolver import PrerequisiteGraphResolver
     from backend.app.engine.llm_fallback import MicroLLMFallback
-    from backend.app.engine.universal_reader import extract_with_llm
+    from backend.app.engine.universal_reader import extract_with_llm, looks_like_national_id, redact_personal_ids
+    from backend.app.engine.scanned_reader import extract_scanned_transcript
     from backend.app.engine.slip_validation import validate_slip
     from backend.app.engine.progress import compute_progress
     from backend.app.core.config import settings
@@ -439,15 +441,25 @@ async def extract_transcript_from_storage(
         )
 
 
-async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict, role: str) -> ExtractPDFResponse:
-    try:
-        pdf_bytes = supabase_svc.download_transcript_bytes(request.file_path)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Failed to download PDF from '{request.file_path}': {str(e)}"
-        )
-
+def run_slip_extraction(
+    pdf_bytes: bytes,
+    tenant_id: str,
+    slip_profile: Optional[str] = None,
+    expected_matric: Optional[str] = None,
+    client: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Unified transcript extraction pipeline:
+    1. Digital forgery inspection.
+    2. Text extraction.
+    3. Routing:
+       - text layer & slip_profile=='utm' -> regex rules
+       - text layer & other -> universal LLM ('ai')
+       - no text layer (scanned) -> PyMuPDF vision LLM ('ai_scan')
+    4. Conforms semesters and courses to standard academic schema.
+    5. Slip validation guardrails.
+    6. PDPA post-filtering (never output national ID numbers).
+    """
     # 1. Check Metadata for Digital Forgery
     is_fraudulent = False
     try:
@@ -470,19 +482,15 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
             detail=f"Failed to extract text from PDF: {str(e)}"
         )
 
-    if not raw_lines:
+    if not raw_lines and not settings.LLM_VISION_MODEL:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Scanned slips aren't supported yet — please upload the original PDF from your student portal."
         )
 
-    # 2b. Load tenant grading scale & slip profile
-    tenant_id = _extract_tenant_id(jwt_payload)
-    slip_profile = _load_tenant_slip_profile(tenant_id)
-    expected_matric = doc.get("matric_no")
-
+    # 3. Load tenant grading scale
     try:
-        scale = load_scale(tenant_id, client=supabase_svc.client)
+        scale = load_scale(tenant_id, client=client)
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -493,7 +501,7 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
     rule_metadata: Dict[str, Any] = {}
     rule_courses = []
 
-    if slip_profile == "utm":
+    if raw_lines and slip_profile == "utm":
         try:
             rule_metadata, rule_courses, unparsed_lines = MalaysianTranscriptParser.parse_transcript_lines(raw_lines, scale=scale)
             has_sem = rule_metadata.get("semester") is not None
@@ -506,6 +514,18 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
         except Exception as e:
             logger.warning(f"[Extract] Rule parser error: {e}")
             use_rules = False
+
+    courses_payload: List[Dict[str, Any]] = []
+    semesters_list: List[Dict[str, Any]] = []
+    initial_warnings: List[str] = []
+    student_name: Optional[str] = None
+    matric_number: Optional[str] = None
+    sem_num: Optional[int] = None
+    session_name: Optional[str] = None
+    printed_gpa: Optional[float] = None
+    printed_cgpa: Optional[float] = None
+    kk_all_sem: Optional[int] = None
+    kd_all_sem: Optional[int] = None
 
     if use_rules:
         source = "rules"
@@ -548,7 +568,7 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
         kk_all_sem = rule_metadata.get("kk_all_sem")
         kd_all_sem = rule_metadata.get("kd_all_sem")
         initial_warnings = list(rule_metadata.get("warnings", []))
-    else:
+    elif raw_lines:
         # Universal AI reader path
         source = "ai"
         model = settings.LLM_MODEL
@@ -570,9 +590,6 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
         semesters_data = ai_data.get("semesters", [])
         matric_number = ai_data.get("matric_no")
         student_name = None
-
-        courses_payload = []
-        semesters_list = []
 
         for sem_obj in semesters_data:
             s_num = sem_obj.get("semester_no", 1)
@@ -632,15 +649,94 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
             session_name = semesters_list[0]["session"]
             printed_gpa = semesters_list[0]["printed_gpa"]
             printed_cgpa = semesters_list[0]["printed_cgpa"]
-        else:
-            sem_num = None
-            session_name = None
-            printed_gpa = None
-            printed_cgpa = None
+    else:
+        # Scanned Slip Path (no text layer)
+        if not settings.LLM_VISION_MODEL:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Scanned slips aren't supported yet — please upload the original PDF from your student portal."
+            )
 
-        kk_all_sem = None
-        kd_all_sem = None
-        initial_warnings = []
+        source = "ai_scan"
+        model = settings.LLM_VISION_MODEL
+        tenant_ctx = {
+            "tenant_id": tenant_id,
+            "valid_grades": list(scale._by_grade.keys()),
+        }
+
+        try:
+            scanned_data = extract_scanned_transcript(pdf_bytes, tenant_ctx)
+        except HTTPException:
+            raise
+        except Exception as scan_err:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Scanned slip reader failed: {scan_err}",
+            )
+
+        semesters_data = scanned_data.get("semesters", [])
+        matric_number = scanned_data.get("matric_no")
+        initial_warnings = list(scanned_data.get("warnings", []))
+        student_name = None
+
+        for sem_obj in semesters_data:
+            s_num = sem_obj.get("semester_no", 1)
+            s_sess = sem_obj.get("session", "")
+            try:
+                norm_s = normalize_semester(f"SEM {s_num} {s_sess}")
+            except Exception:
+                norm_s = f"SEM {s_num} {s_sess}"
+
+            sem_courses_payload = []
+            for c in sem_obj.get("courses", []):
+                c_code = c.get("code", "").replace(" ", "").upper()
+                c_grade = c.get("grade", "").strip().upper()
+                c_creds = c.get("credits", 3)
+
+                try:
+                    is_p = scale.is_pass(c_grade, c_code)
+                    in_cgpa = scale.counts_in_cgpa(c_grade, c_code)
+                    as_comp = scale.counts_as_completed(c_grade, c_code)
+                    if is_p and not in_cgpa and as_comp:
+                        c_status = "Exempted"
+                    elif is_p:
+                        c_status = "Passed"
+                    elif c_grade in {"TD", "TS"}:
+                        c_status = "In-Progress"
+                    else:
+                        c_status = "Failed"
+                except Exception:
+                    c_status = "Passed" if c_grade in {"A+", "A", "A-", "B+", "B", "B-", "C+", "C"} else "Failed"
+
+                c_creds_val = int(c_creds) if isinstance(c_creds, (int, float)) and float(c_creds).is_integer() else c_creds
+
+                item_dict = {
+                    "course_code": c_code,
+                    "course_name": c.get("name", c_code),
+                    "grade": c_grade,
+                    "credit_hour": c_creds_val,
+                    "credits": c_creds_val,
+                    "status": c_status,
+                    "warning": None,
+                    "session_semester": norm_s,
+                    "is_ai_parsed": True,
+                }
+                sem_courses_payload.append(item_dict)
+                courses_payload.append(item_dict)
+
+            semesters_list.append({
+                "semester_no": s_num,
+                "session": s_sess,
+                "courses": sem_courses_payload,
+                "printed_gpa": sem_obj.get("printed_gpa"),
+                "printed_cgpa": sem_obj.get("printed_cgpa"),
+            })
+
+        if semesters_list:
+            sem_num = semesters_list[0]["semester_no"]
+            session_name = semesters_list[0]["session"]
+            printed_gpa = semesters_list[0]["printed_gpa"]
+            printed_cgpa = semesters_list[0]["printed_cgpa"]
 
     # Run Guardrails on result
     guardrail_warnings, needs_review = validate_slip(
@@ -657,7 +753,21 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
 
     gpa_warning = next((w for w in initial_warnings if "GPA mismatch" in w), None)
 
-    extracted_data = {
+    # PDPA Post-Filtering
+    if looks_like_national_id(matric_number):
+        matric_number = None
+
+    for item in courses_payload:
+        if looks_like_national_id(item.get("course_code")):
+            item["course_code"] = "UNKNOWN"
+        if looks_like_national_id(item.get("course_name")):
+            item["course_name"] = "UNKNOWN"
+        else:
+            item["course_name"] = redact_personal_ids(item.get("course_name", ""))
+        if looks_like_national_id(item.get("grade")):
+            item["grade"] = ""
+
+    return {
         "source": source,
         "model": model,
         "warnings": initial_warnings,
@@ -678,11 +788,33 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
         "gpa_warning": gpa_warning,
     }
 
-    # 6. Persist server-side (the browser never writes extracted grades)
-    extracted_data["original_courses"] = courses_payload
+
+async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict, role: str) -> ExtractPDFResponse:
+    try:
+        pdf_bytes = supabase_svc.download_transcript_bytes(request.file_path)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Failed to download PDF from '{request.file_path}': {str(e)}"
+        )
+
+    tenant_id = _extract_tenant_id(jwt_payload)
+    slip_profile = _load_tenant_slip_profile(tenant_id)
+    expected_matric = doc.get("matric_no")
+
+    extracted_data = run_slip_extraction(
+        pdf_bytes=pdf_bytes,
+        tenant_id=tenant_id,
+        slip_profile=slip_profile,
+        expected_matric=expected_matric,
+        client=supabase_svc.client,
+    )
+
+    # Persist server-side (the browser never writes extracted grades)
+    extracted_data["original_courses"] = extracted_data["courses"]
     update_payload = {
         "extracted_data": extracted_data,
-        "fraud_flag": is_fraudulent,
+        "fraud_flag": extracted_data.get("fraud_flag", False),
         "processing_error": None,
     }
     if role == "student":
@@ -695,7 +827,6 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save extracted data: {update_err}",
         )
-
 
     return ExtractPDFResponse(success=True, data=extracted_data)
 

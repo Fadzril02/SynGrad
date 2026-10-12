@@ -70,8 +70,14 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+try:
+    from app.v1.endpoints import lab
+except ImportError:
+    from backend.app.v1.endpoints import lab
+
 # Mount API Routers
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(lab.router)
 
 
 @app.get("/")

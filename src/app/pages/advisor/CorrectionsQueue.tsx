@@ -308,6 +308,13 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
                     </div>
                   )}
 
+                  {activeAuditDoc?.extracted_data?.source === "ai_scan" && (
+                    <div className="mb-4 p-3.5 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg flex items-center gap-2.5 text-xs font-medium">
+                      <Sparkles className="w-4 h-4 text-blue-800 shrink-0" />
+                      <span>Read from a scanned slip by AI — scans can be misread, please check every row carefully.</span>
+                    </div>
+                  )}
+
                   {/* Warnings above the table */}
                   {activeAuditDoc?.extracted_data?.warnings && activeAuditDoc.extracted_data.warnings.length > 0 && (
                     <div className="mb-4 space-y-2">

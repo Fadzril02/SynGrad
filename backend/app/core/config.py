@@ -26,11 +26,15 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     RESEND_FROM: Optional[str] = None
 
-    # Micro-LLM Fallback (Groq / OpenRouter / OpenAI SDK compatible)
+    # Micro-LLM Fallback & Vision Model (Groq / OpenRouter / OpenAI SDK compatible)
     GROQ_API_KEY: Optional[str] = ""
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "https://api.groq.com/openai/v1"
     LLM_MODEL: str = "llama-3.1-8b-instant"
+    LLM_VISION_MODEL: Optional[str] = None
+
+    # Staging Slip Lab Settings
+    LAB_ALLOWED_EMAILS: str = ""
 
     # Frontend URL & CORS
     FRONTEND_URL: str = "http://localhost:5173"

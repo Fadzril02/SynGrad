@@ -9,6 +9,7 @@ const LandingPage = React.lazy(() => import('./pages/LandingPage').then(module =
 const AdvisorPortal = React.lazy(() => import('./pages/advisor/AdvisorPortal').then(module => ({ default: module.AdvisorPortal })));
 const StudentPortal = React.lazy(() => import('./pages/student/StudentPortal').then(module => ({ default: module.StudentPortal })));
 const CompleteRegistration = React.lazy(() => import('../pages/auth/CompleteRegistration').then(module => ({ default: module.CompleteRegistration })));
+const SlipLab = React.lazy(() => import('./pages/lab/SlipLab').then(module => ({ default: module.SlipLab })));
 
 // ── Role-gated route wrapper ─────────────────────────────────────────────────
 function RoleRoute({
@@ -92,6 +93,11 @@ export default function App() {
                   </RoleRoute>
                 }
               />
+
+              {/* ── Staging Slip Lab ────────────────────────────────────────── */}
+              {(import.meta.env.VITE_ENVIRONMENT === 'staging' || import.meta.env.MODE === 'staging') && (
+                <Route path="/lab" element={<SlipLab />} />
+              )}
 
               {/* ── Catch-All ───────────────────────────────────────────────── */}
               <Route path="*" element={<Navigate to="/" replace />} />

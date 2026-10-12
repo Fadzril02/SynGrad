@@ -329,6 +329,8 @@ Constraint until revenue: stay on free tiers (Supabase, Render, Vercel, Resend).
 | 6b | Pre-launch polish + performance pass (dead code, UTM prefix in DegreeAuditView, `/health` leak, Render paid plan, backups) | |
 | 7 | Public launch (legal: SSM, PDPA privacy policy + consent) | |
 
+> **Privacy-Policy TODO:** AI reads uploaded slip text/images; students should cover IC before scanning.
+
 Full pre-launch list: project doc `claude/launch-checklist.md`.
 
 ### 6.4 Pilot
