@@ -98,7 +98,6 @@ export function AdvisorDashboard() {
     created_at?: string;
   }
   const [recentEnrollments, setRecentEnrollments] = useState<RecentEnrollment[]>([]);
-  const [isRevoking, setIsRevoking] = useState<string | null>(null); // stores matric_no being revoked
 
   // Curriculum Upload Modal State
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -390,33 +389,6 @@ export function AdvisorDashboard() {
       } catch (err) {
         console.warn("[AdvisorDashboard] Lazy fetch academic_records failed:", err);
       }
-    }
-  };
-
-  // Handle Revoke Student — Step 2
-  const handleRevokeStudent = async (matricNo: string, userId: string) => {
-    const confirmed = window.confirm(
-      `Are you sure you want to revoke this student's access? This will permanently delete their account and enforce a 24-hour registration ban on this matric number.`
-    );
-    if (!confirmed) return;
-
-    setIsRevoking(matricNo);
-    try {
-      const { data, error } = await db.functions.invoke('revoke-student', {
-        body: { matric_no: matricNo, user_id: userId, advisor_staff_id: advisorStaffId }
-      });
-
-      if (error) throw error;
-
-      // Optimistically remove from local state on success
-      setRecentEnrollments((prev) => prev.filter((e) => e.matric_no !== matricNo));
-      setRoster((prev) => prev.filter((s) => s.matric_no !== matricNo));
-      toast.success(`Access revoked for ${matricNo}. A 24-hour re-registration ban has been enforced.`);
-    } catch (err: any) {
-      console.error('[handleRevokeStudent] Edge Function error:', err);
-      toast.error(err.message || `Failed to revoke access for ${matricNo}. Please try again.`);
-    } finally {
-      setIsRevoking(null);
     }
   };
 
@@ -1279,7 +1251,7 @@ const handleDownloadTemplate = () => {
               </span>
             </div>
             <p className="text-sm text-gray-600 leading-relaxed">
-              Review self-registered students. Revoke access for fraudulent or duplicate registrations.
+              Review self-registered students.
             </p>
           </div>
           <span className="text-xs font-mono text-gray-600 bg-gray-50 px-2.5 py-1 rounded-md border border-gray-200 shrink-0">
@@ -1301,7 +1273,6 @@ const handleDownloadTemplate = () => {
                   <th className="py-3 px-6">Matric No</th>
                   <th className="py-3 px-6">Institutional Email</th>
                   <th className="py-3 px-6">Registered At</th>
-                  <th className="py-3 px-6 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1311,7 +1282,6 @@ const handleDownloadTemplate = () => {
                         dateStyle: 'medium'
                       })}`
                     : '—';
-                  const isBeingRevoked = isRevoking === enrollment.matric_no;
 
                   return (
                     <tr
@@ -1329,31 +1299,6 @@ const handleDownloadTemplate = () => {
                       </td>
                       <td className="py-3.5 px-6 text-xs text-gray-500 font-mono">
                         {registeredAt}
-                      </td>
-                      <td className="py-3.5 px-6 text-right">
-                        <button
-                          id={`revoke-btn-${enrollment.matric_no}`}
-                          onClick={() =>
-                            handleRevokeStudent(
-                              enrollment.matric_no,
-                              enrollment.user_id ?? ''
-                            )
-                          }
-                          disabled={isBeingRevoked || !enrollment.user_id}
-                          title={
-                            !enrollment.user_id
-                              ? 'Cannot revoke: no auth account linked'
-                              : 'Revoke this student\'s access'
-                          }
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {isBeingRevoked ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                          {isBeingRevoked ? 'Revoking…' : 'Revoke'}
-                        </button>
                       </td>
                     </tr>
                   );

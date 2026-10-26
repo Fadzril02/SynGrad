@@ -47,15 +47,6 @@ interface AuthCardProps {
   handleLogin: (e: React.FormEvent) => void;
   handleRegistration: (e: React.FormEvent) => void;
   resetFormFeedback: () => void;
-  isDuplicate?: boolean;
-  isContesting?: boolean;
-  setIsContesting?: (val: boolean) => void;
-  contestEmail?: string;
-  setContestEmail?: (val: string) => void;
-  contestProcessing?: boolean;
-  contestSuccess?: boolean;
-  contestErrorMessage?: string | null;
-  handleContestSubmit?: (e: React.FormEvent) => void;
 }
 
 export function AuthCard({
@@ -92,65 +83,50 @@ export function AuthCard({
   handleLogin,
   handleRegistration,
   resetFormFeedback,
-  isDuplicate,
-  isContesting,
-  setIsContesting,
-  contestEmail,
-  setContestEmail,
-  contestProcessing,
-  contestSuccess,
-  contestErrorMessage,
-  handleContestSubmit,
 }: AuthCardProps) {
   return (
     <div className="w-full max-w-md mx-auto bg-white rounded-2xl border border-[#E5E7EB] shadow-sm p-6 sm:p-8">
       {/* Tab Switcher: Log In | Create Account */}
-      {!isContesting && (
-        <div className="grid grid-cols-2 p-1 bg-[#F9FAFB] rounded-xl mb-6 border border-[#E5E7EB]">
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode("login");
-              resetFormFeedback();
-            }}
-            className={`py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
-              authMode === "login"
-                ? "bg-white text-[#1E3A8A] shadow-xs font-bold"
-                : "text-ink-muted hover:text-[#1E3A8A]"
-            }`}
-          >
-            Log in
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode("register");
-              resetFormFeedback();
-            }}
-            className={`py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
-              authMode === "register"
-                ? "bg-white text-[#1E3A8A] shadow-xs font-bold"
-                : "text-ink-muted hover:text-[#1E3A8A]"
-            }`}
-          >
-            Create account
-          </button>
-        </div>
-      )}
+      <div className="grid grid-cols-2 p-1 bg-[#F9FAFB] rounded-xl mb-6 border border-[#E5E7EB]">
+        <button
+          type="button"
+          onClick={() => {
+            setAuthMode("login");
+            resetFormFeedback();
+          }}
+          className={`py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
+            authMode === "login"
+              ? "bg-white text-[#1E3A8A] shadow-xs font-bold"
+              : "text-ink-muted hover:text-[#1E3A8A]"
+          }`}
+        >
+          Log in
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setAuthMode("register");
+            resetFormFeedback();
+          }}
+          className={`py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E3A8A] ${
+            authMode === "register"
+              ? "bg-white text-[#1E3A8A] shadow-xs font-bold"
+              : "text-ink-muted hover:text-[#1E3A8A]"
+          }`}
+        >
+          Create account
+        </button>
+      </div>
 
       {/* Form Heading & Subtext */}
       <div className="mb-6">
         <h2 className="font-serif text-xl sm:text-2xl font-bold tracking-tight text-[#1E3A8A]">
-          {isContesting
-            ? "Contest Registration"
-            : authMode === "login"
+          {authMode === "login"
             ? "Welcome back"
             : "Create your account"}
         </h2>
         <p className="text-xs text-ink mt-1.5 leading-relaxed font-normal">
-          {isContesting
-            ? "Verify ownership of your student record with your institutional email."
-            : authMode === "login"
+          {authMode === "login"
             ? "Sign in with your institutional credentials to access your advising portal."
             : "Choose your role below to get started with curriculum & degree audit tools."}
         </p>
@@ -163,21 +139,6 @@ export function AuthCard({
             <AlertCircle className="w-4 h-4 shrink-0 text-[#DC2626] mt-0.5" />
             <span>{errorMessage || authError}</span>
           </div>
-          {isDuplicate && setIsContesting && (
-            <div className="pt-2 border-t border-[#FECACA] flex items-center justify-between text-xs">
-              <span className="text-ink">Is this your matric number?</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsContesting(true);
-                  resetFormFeedback();
-                }}
-                className="text-[#1E3A8A] hover:text-[#1E3A8A] font-semibold underline underline-offset-2 cursor-pointer"
-              >
-                Contest registration
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -189,87 +150,7 @@ export function AuthCard({
       )}
 
       {/* Dynamic Form Area */}
-      {isContesting && handleContestSubmit && setIsContesting && setContestEmail ? (
-        /* Contest Form */
-        contestSuccess ? (
-          <div className="p-5 rounded-xl bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] space-y-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-[#059669] shrink-0" />
-              <span className="text-sm font-bold">Dispute Submitted</span>
-            </div>
-            <p className="leading-relaxed">
-              Your registration dispute has been recorded. Your academic advisor will review your institutional claim ({contestEmail}) and resolve the collision.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setIsContesting(false);
-                resetFormFeedback();
-              }}
-              className="w-full py-2.5 px-4 bg-[#1E3A8A] hover:bg-[#1E40AF] text-white font-semibold text-xs rounded-xl transition-colors cursor-pointer"
-            >
-              Return to registration
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleContestSubmit} className="space-y-4">
-            {contestErrorMessage && (
-              <div className="p-3 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-xs font-medium text-[#B91C1C] flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-[#DC2626] mt-0.5" />
-                <span>{contestErrorMessage}</span>
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <label htmlFor="contestEmail" className="block text-xs font-semibold text-[#1E3A8A]">
-                Institutional Email Address
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-ink-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="contestEmail"
-                  type="email"
-                  value={contestEmail || ""}
-                  onChange={(e) => setContestEmail(e.target.value)}
-                  placeholder="e.g. yourname@university.edu"
-                  required
-                  className="w-full pl-9 pr-3 py-2.5 text-xs bg-[#F9FAFB] border border-[#E5E7EB] rounded-xl text-[#1E3A8A] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A8A] transition-colors"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={contestProcessing || !(contestEmail || "").trim()}
-              className="w-full py-3 px-4 bg-[#1E3A8A] hover:bg-[#1E40AF] active:bg-[#1E40AF] text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              {contestProcessing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Submitting claim...</span>
-                </>
-              ) : (
-                <>
-                  <span>Submit registration contest</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-
-            <div className="text-center pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsContesting(false);
-                  resetFormFeedback();
-                }}
-                className="text-xs text-ink-muted hover:text-[#1E3A8A] transition-colors cursor-pointer"
-              >
-                Cancel and return
-              </button>
-            </div>
-          </form>
-        )
-      ) : authMode === "login" ? (
+      {authMode === "login" ? (
         /* Login Form */
         <form onSubmit={handleLogin} className="space-y-4">
           <div className="space-y-1.5">
@@ -534,22 +415,20 @@ export function AuthCard({
       )}
 
       {/* Switch Mode Prompt */}
-      {!isContesting && (
-        <div className="mt-6 pt-5 border-t border-[#E5E7EB] text-center">
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode(authMode === "login" ? "register" : "login");
-              resetFormFeedback();
-            }}
-            className="text-xs text-ink hover:text-[#1E3A8A] font-medium transition-colors cursor-pointer"
-          >
-            {authMode === "login"
-              ? "Don't have an account yet? Create one"
-              : "Already registered? Sign in instead"}
-          </button>
-        </div>
-      )}
+      <div className="mt-6 pt-5 border-t border-[#E5E7EB] text-center">
+        <button
+          type="button"
+          onClick={() => {
+            setAuthMode(authMode === "login" ? "register" : "login");
+            resetFormFeedback();
+          }}
+          className="text-xs text-ink hover:text-[#1E3A8A] font-medium transition-colors cursor-pointer"
+        >
+          {authMode === "login"
+            ? "Don't have an account yet? Create one"
+            : "Already registered? Sign in instead"}
+        </button>
+      </div>
     </div>
   );
 }

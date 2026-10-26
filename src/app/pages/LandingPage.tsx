@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Navigate } from "react-router";
 import { useAuth } from "../../context/AuthContext";
-import { supabase } from "../../lib/supabase";
 import { warmUpBackend } from "../../lib/api";
 import { toast } from "sonner";
 
@@ -36,14 +35,6 @@ export function LandingPage() {
   const [studentPassword, setStudentPassword] = useState("");
   const [showStudentPassword, setShowStudentPassword] = useState(false);
 
-  // Collision & Dispute Contest States
-  const [isDuplicate, setIsDuplicate] = useState(false);
-  const [isContesting, setIsContesting] = useState(false);
-  const [contestEmail, setContestEmail] = useState("");
-  const [contestProcessing, setContestProcessing] = useState(false);
-  const [contestSuccess, setContestSuccess] = useState(false);
-  const [contestErrorMessage, setContestErrorMessage] = useState<string | null>(null);
-
   // Advisor Registration Form State
   const [advisorFullName, setAdvisorFullName] = useState("");
   const [advisorEmail, setAdvisorEmail] = useState("");
@@ -68,10 +59,6 @@ export function LandingPage() {
   const resetFormFeedback = () => {
     setErrorMessage(null);
     setSuccessMessage(null);
-    setIsDuplicate(false);
-    setIsContesting(false);
-    setContestErrorMessage(null);
-    setContestSuccess(false);
     clearAuthError();
   };
 
@@ -247,43 +234,6 @@ export function LandingPage() {
     }
   };
 
-  const handleContestSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setContestErrorMessage(null);
-
-    const cleanEmail = contestEmail.trim().toLowerCase();
-    if (!cleanEmail) {
-      toast.error("Please enter your institutional email address.");
-      setContestErrorMessage("Please enter your institutional email address.");
-      return;
-    }
-
-    if (!/^[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}$/.test(cleanEmail)) {
-      toast.error("Please provide a valid institutional email.");
-      setContestErrorMessage("Please provide a valid institutional email.");
-      return;
-    }
-
-    setContestProcessing(true);
-    try {
-      const { error } = await supabase.from('registration_disputes').insert({
-        disputed_by_email: cleanEmail,
-      });
-
-      if (error) throw error;
-
-      toast.success("Contest filed successfully!");
-      setContestSuccess(true);
-    } catch (err: any) {
-      console.error("Contest Registration Error:", err);
-      const errMsg = err.message || "Failed to submit dispute. Please try again.";
-      setContestErrorMessage(errMsg);
-      toast.error(errMsg);
-    } finally {
-      setContestProcessing(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-ink font-sans flex flex-col justify-between antialiased selection:bg-[#1E3A8A] selection:text-white">
       {/* 1. Header */}
@@ -340,15 +290,6 @@ export function LandingPage() {
                 handleLogin={handleLogin}
                 handleRegistration={handleRegistration}
                 resetFormFeedback={resetFormFeedback}
-                isDuplicate={isDuplicate}
-                isContesting={isContesting}
-                setIsContesting={setIsContesting}
-                contestEmail={contestEmail}
-                setContestEmail={setContestEmail}
-                contestProcessing={contestProcessing}
-                contestSuccess={contestSuccess}
-                contestErrorMessage={contestErrorMessage}
-                handleContestSubmit={handleContestSubmit}
               />
             </div>
           </div>
