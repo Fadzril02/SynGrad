@@ -249,7 +249,7 @@ def test_scanned_pdf_more_than_six_pages_returns_422(monkeypatch):
     # Create fake PyMuPDF doc with 7 pages
     fake_doc = [MagicMock() for _ in range(7)]
 
-    with patch("fitz.open", return_value=fake_doc):
+    with patch("pymupdf.open", return_value=fake_doc):
         with pytest.raises(Exception) as exc_info:
             scanned_reader.render_pdf_to_images(b"%PDF-mock-7-pages")
         assert exc_info.value.status_code == 422

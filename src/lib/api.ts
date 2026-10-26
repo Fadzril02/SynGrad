@@ -10,18 +10,51 @@ export const apiClient = axios.create({
   timeout: 75000,
 });
 
+// Render free tier sleeps when idle. Fire one silent GET per page load to start waking it.
+// No retries, no auth, errors ignored.
+let warmUpSent = false;
+export function warmUpBackend(): void {
+  if (warmUpSent) return;
+  warmUpSent = true;
+  fetch(`${API_BASE_URL}/api/v1/health`).catch(() => {});
+}
+
+// "Waking up" notice: shown once any request is still pending after 5 s, hidden when
+// the last slow request finishes.
+const SLOW_NOTICE_ID = 'server-waking';
+const SLOW_NOTICE_MS = 5000;
+let slowRequests = 0;
+
+function startSlowTimer(config: any) {
+  config._slowServerTimer = setTimeout(() => {
+    config._slowShown = true;
+    slowRequests += 1;
+    toast('Waking up the server — first load can take up to a minute.', {
+      id: SLOW_NOTICE_ID,
+      duration: Infinity,
+    });
+  }, SLOW_NOTICE_MS);
+}
+
+function stopSlowTimer(config: any) {
+  if (!config) return;
+  if (config._slowServerTimer) clearTimeout(config._slowServerTimer);
+  config._slowServerTimer = undefined;
+  if (config._slowShown) {
+    config._slowShown = false;
+    slowRequests = Math.max(0, slowRequests - 1);
+    if (slowRequests === 0) toast.dismiss(SLOW_NOTICE_ID);
+  }
+}
+
 // Surface a clear message when the backend is cold-starting or unreachable
 apiClient.interceptors.response.use(
   (response) => {
-    const timer = (response?.config as any)?._slowServerTimer;
-    if (timer) clearTimeout(timer);
-    toast.dismiss('server-waking');
+    stopSlowTimer(response?.config);
     return response;
   },
   (error) => {
-    const timer = (error?.config as any)?._slowServerTimer;
-    if (timer) clearTimeout(timer);
-    toast.dismiss('server-waking');
+    stopSlowTimer(error?.config);
 
     if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
       error.message =
@@ -38,12 +71,7 @@ apiClient.interceptors.response.use(
 // FIX #4: Use refreshSession() when the cached token is expired or near expiry
 // to prevent the "upload fails until relogin" symptom caused by stale access tokens.
 apiClient.interceptors.request.use(async (config) => {
-  const timer = setTimeout(() => {
-    toast("Server is starting, please wait… this can take up to a minute.", {
-      id: "server-waking",
-    });
-  }, 5000);
-  (config as any)._slowServerTimer = timer;
+  startSlowTimer(config);
 
   let { data: { session } } = await supabase.auth.getSession();
 
@@ -67,9 +95,7 @@ apiClient.interceptors.request.use(async (config) => {
   }
   return config;
 }, (error) => {
-  const timer = (error?.config as any)?._slowServerTimer;
-  if (timer) clearTimeout(timer);
-  toast.dismiss('server-waking');
+  stopSlowTimer(error?.config);
   return Promise.reject(error);
 });
 

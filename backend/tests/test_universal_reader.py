@@ -203,7 +203,7 @@ def test_utm_confident_text_uses_rules_no_llm(mock_db, sample_scale):
 
     with patch.object(audit.supabase_svc, "client", _FakeDBClient(mock_db)), \
          patch.object(audit.supabase_svc, "download_transcript_bytes", return_value=b"%PDF-1.4 mock"), \
-         patch("fitz.open"), \
+         patch("pymupdf.open"), \
          patch.object(audit.PDFExtractor, "extract_text_lines_from_bytes", return_value=utm_text_lines), \
          patch.object(audit, "load_scale", return_value=sample_scale), \
          patch.object(audit, "extract_with_llm") as mock_llm:
@@ -252,7 +252,7 @@ def test_utm_text_missing_semester_uses_ai_path(mock_db, sample_scale):
 
     with patch.object(audit.supabase_svc, "client", _FakeDBClient(mock_db)), \
          patch.object(audit.supabase_svc, "download_transcript_bytes", return_value=b"%PDF-1.4 mock"), \
-         patch("fitz.open"), \
+         patch("pymupdf.open"), \
          patch.object(audit.PDFExtractor, "extract_text_lines_from_bytes", return_value=incomplete_lines), \
          patch.object(audit, "load_scale", return_value=sample_scale), \
          patch.object(audit, "extract_with_llm", return_value=mock_ai_output) as mock_llm:
@@ -297,7 +297,7 @@ def test_synthetic_non_utm_slip_uses_ai_path(mock_db, sample_scale):
 
     with patch.object(audit.supabase_svc, "client", _FakeDBClient(mock_db)), \
          patch.object(audit.supabase_svc, "download_transcript_bytes", return_value=b"%PDF-1.4 mock"), \
-         patch("fitz.open"), \
+         patch("pymupdf.open"), \
          patch.object(audit.PDFExtractor, "extract_text_lines_from_bytes", return_value=non_utm_lines), \
          patch.object(audit, "load_scale", return_value=sample_scale), \
          patch.object(audit, "extract_with_llm", return_value=mock_ai_output) as mock_llm:
@@ -322,7 +322,7 @@ def test_scanned_pdf_returns_422(mock_db, sample_scale):
 
     with patch.object(audit.supabase_svc, "client", _FakeDBClient(mock_db)), \
          patch.object(audit.supabase_svc, "download_transcript_bytes", return_value=b"%PDF-1.4 mock"), \
-         patch("fitz.open"), \
+         patch("pymupdf.open"), \
          patch.object(audit.PDFExtractor, "extract_text_lines_from_bytes", return_value=[]):
 
         res = client.post("/api/v1/audit/extract", json={"file_path": "slips/scanned.pdf"})

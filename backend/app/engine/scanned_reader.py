@@ -11,9 +11,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
-import fitz  # PyMuPDF
 from fastapi import HTTPException, status
-from openai import OpenAI
 
 try:
     from app.core.config import settings
@@ -80,8 +78,10 @@ def render_pdf_to_images(pdf_bytes: bytes) -> List[bytes]:
     Enforces ~200 dpi, long side <= 2000px, max 6 pages.
     Never writes images to disk or external storage.
     """
+    import pymupdf
+
     try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -113,7 +113,7 @@ def render_pdf_to_images(pdf_bytes: bytes) -> List[bytes]:
         else:
             scale = desired_scale
 
-        matrix = fitz.Matrix(scale, scale)
+        matrix = pymupdf.Matrix(scale, scale)
         pix = page.get_pixmap(matrix=matrix)
         png_bytes = pix.tobytes("png")
         images.append(png_bytes)
@@ -147,6 +147,8 @@ def extract_page_with_vision(
 
     system_prompt = VISION_SYSTEM_PROMPT.format(valid_grades_context=valid_grades_context)
     b64_image = base64.b64encode(png_bytes).decode("utf-8")
+
+    from openai import OpenAI
 
     client = OpenAI(
         api_key=settings.LLM_API_KEY,

@@ -182,3 +182,42 @@ def test_extract_unauthorized_never_downloads(fake_db):
     dl.assert_not_called()
 
 
+
+
+def test_reject_purges_slip_and_marks_path(fake_db):
+    c = _client_as("adv-uid")
+    with patch.object(audit.supabase_svc, "delete_file_from_storage", return_value=True) as rm:
+        res = c.post("/api/v1/audit/reject-document", json={"document_id": "doc-1"})
+    assert res.status_code == 200 and res.json()["processing_status"] == "Rejected"
+    rm.assert_called_once_with(bucket_name="academic-slips", file_path="slips/a.pdf")
+    doc = fake_db["uploaded_documents"][0]
+    assert doc["processing_status"] == "Rejected" and doc["file_path"] == "[PURGED]"
+
+
+def test_reject_still_succeeds_when_storage_delete_fails(fake_db, capsys):
+    c = _client_as("adv-uid")
+    with patch.object(audit.supabase_svc, "delete_file_from_storage", return_value=False):
+        res = c.post("/api/v1/audit/reject-document", json={"document_id": "doc-1"})
+    assert res.status_code == 200
+    doc = fake_db["uploaded_documents"][0]
+    assert doc["processing_status"] == "Rejected"
+    assert doc["file_path"] == "slips/a.pdf"  # kept so the file can still be found and removed
+    assert "[Auto-Purge ERROR]" in capsys.readouterr().out
+
+
+def test_reject_still_succeeds_when_storage_delete_raises(fake_db, capsys):
+    c = _client_as("adv-uid")
+    with patch.object(audit.supabase_svc, "delete_file_from_storage", side_effect=RuntimeError("boom")):
+        res = c.post("/api/v1/audit/reject-document", json={"document_id": "doc-1"})
+    assert res.status_code == 200
+    assert fake_db["uploaded_documents"][0]["processing_status"] == "Rejected"
+    assert "[Auto-Purge ERROR]" in capsys.readouterr().out
+
+
+def test_reject_by_other_advisor_never_deletes(fake_db):
+    c = _client_as("other-adv")
+    with patch.object(audit.supabase_svc, "delete_file_from_storage") as rm:
+        res = c.post("/api/v1/audit/reject-document", json={"document_id": "doc-1"})
+    assert res.status_code == 403
+    rm.assert_not_called()
+    assert fake_db["uploaded_documents"][0]["file_path"] == "slips/a.pdf"

@@ -4,7 +4,6 @@ Smart Academic Assessment System - Micro-LLM Fallback Module (Zero-Waste)
 
 import json
 from typing import List, Optional
-from openai import OpenAI
 try:
     from app.core.config import settings
     from app.schemas.audit import ParsedLineItem
@@ -28,12 +27,18 @@ Output raw JSON only without markdown fences."""
 
 class MicroLLMFallback:
     def __init__(self):
-        self.client = None
-        if settings.LLM_API_KEY:
-            self.client = OpenAI(
+        self._client = None
+
+    @property
+    def client(self):
+        # Built on first use so importing this module doesn't load the openai SDK
+        if self._client is None and settings.LLM_API_KEY:
+            from openai import OpenAI
+            self._client = OpenAI(
                 api_key=settings.LLM_API_KEY,
                 base_url=settings.LLM_BASE_URL
             )
+        return self._client
 
     def parse_ambiguous_lines(self, lines: List[str], current_semester: str = "Transferred") -> List[ParsedLineItem]:
         """

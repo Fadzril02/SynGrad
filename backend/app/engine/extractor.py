@@ -3,7 +3,6 @@
 Company: [COMPANY_NAME]
 """
 
-import fitz  # PyMuPDF
 from typing import List, Dict, Any
 
 
@@ -14,8 +13,10 @@ class PDFExtractor:
         Extract raw text lines from PDF in-memory bytes using PyMuPDF.
         Runs in <50ms without disk I/O.
         """
+        import pymupdf
+
         lines: List[str] = []
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
             for page in doc:
                 text = page.get_text("text")
                 for line in text.splitlines():
@@ -29,8 +30,10 @@ class PDFExtractor:
         """
         Extract structured blocks with coordinates from PDF in-memory bytes.
         """
+        import pymupdf
+
         blocks_data: List[Dict[str, Any]] = []
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
             for page_idx, page in enumerate(doc):
                 page_blocks = page.get_text("blocks")
                 for b in page_blocks:

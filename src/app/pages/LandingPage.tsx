@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, Navigate } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../lib/supabase";
-import { api } from "../../lib/api";
+import { warmUpBackend } from "../../lib/api";
 import { toast } from "sonner";
 
 import { LandingHeader } from "./landing/LandingHeader";
@@ -55,9 +55,9 @@ export function LandingPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
 
-  // Warm up backend
+  // Warm up backend (one silent ping per page load)
   useEffect(() => {
-    api.getHealth().catch(() => {});
+    warmUpBackend();
   }, []);
 
   // Early returns strictly below all hook calls

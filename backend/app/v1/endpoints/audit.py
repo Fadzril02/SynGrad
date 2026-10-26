@@ -6,7 +6,6 @@ import uuid
 import asyncio
 import time
 import logging
-import fitz  # PyMuPDF
 from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Dict, Any, List, Optional
 
@@ -461,9 +460,11 @@ def run_slip_extraction(
     6. PDPA post-filtering (never output national ID numbers).
     """
     # 1. Check Metadata for Digital Forgery
+    import pymupdf
+
     is_fraudulent = False
     try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
             meta = pdf_doc.metadata or {}
             creator = (meta.get("creator") or "").lower()
             producer = (meta.get("producer") or "").lower()
@@ -1133,7 +1134,7 @@ async def reject_document(
             detail="document_id is required."
         )
     # Only the student's own advisor (same tenant) may reject this document
-    _load_authorized_document(jwt_payload, document_id=request.document_id, allow_student=False)
+    doc, _role = _load_authorized_document(jwt_payload, document_id=request.document_id, allow_student=False)
 
     try:
         if supabase_svc.client:
@@ -1142,18 +1143,34 @@ async def reject_document(
             }
             supabase_svc.client.table("uploaded_documents").update(update_payload).eq("id", request.document_id).execute()
             print(f"[Document Rejection] Document {request.document_id} marked as Rejected by {advisor_id}.")
-        return RejectDocumentResponse(
-            success=True,
-            document_id=request.document_id,
-            processing_status="Rejected",
-            message=f"Document '{request.document_id}' successfully marked as Rejected."
-        )
     except Exception as e:
         print(f"[Document Rejection Error] {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to reject document: {str(e)}"
         )
+
+    # Purge the slip once rejected (same as approval). A failed delete must not lose the rejection;
+    # file_path is kept on failure so the file can still be found and removed later.
+    target_path = doc.get("file_path")
+    if target_path and target_path not in {"", "[PURGED]"}:
+        try:
+            deleted = supabase_svc.delete_file_from_storage(bucket_name="academic-slips", file_path=target_path)
+            if deleted:
+                supabase_svc.client.table("uploaded_documents").update(
+                    {"file_path": "[PURGED]"}
+                ).eq("id", request.document_id).execute()
+            else:
+                print(f"[Auto-Purge ERROR] Rejected document '{request.document_id}': slip not deleted from storage.")
+        except Exception as purge_err:
+            print(f"[Auto-Purge ERROR] Rejected document '{request.document_id}': {purge_err}")
+
+    return RejectDocumentResponse(
+        success=True,
+        document_id=request.document_id,
+        processing_status="Rejected",
+        message=f"Document '{request.document_id}' successfully marked as Rejected."
+    )
 
 
 @router.post(

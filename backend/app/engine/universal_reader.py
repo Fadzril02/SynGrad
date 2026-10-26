@@ -8,7 +8,6 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
-from openai import OpenAI
 
 try:
     from app.core.config import settings
@@ -108,6 +107,8 @@ def extract_with_llm(text: str, tenant_ctx: Optional[Dict[str, Any]] = None) -> 
 
     system_prompt = UNIVERSAL_SYSTEM_PROMPT.format(valid_grades_context=valid_grades_context)
     capped_text = redact_personal_ids(text)[:MAX_INPUT_CHAR_LIMIT]
+
+    from openai import OpenAI
 
     client = OpenAI(
         api_key=settings.LLM_API_KEY,

@@ -2,7 +2,7 @@ import { supabase } from '../../lib/supabase';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { api } from '../../lib/api';
+import { api, warmUpBackend } from '../../lib/api';
 import { LoadingScreen } from '../../components/shared/LoadingScreen';
 import { 
   GraduationCap, 
@@ -41,9 +41,9 @@ export function CompleteRegistration() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  // Warm up backend
+  // Warm up backend (one silent ping per page load)
   useEffect(() => {
-    api.getHealth().catch(() => {});
+    warmUpBackend();
   }, []);
 
   // Auto-fill full name from Supabase user_metadata if available
