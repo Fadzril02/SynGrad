@@ -34,7 +34,8 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
   const [manualCode, setManualCode] = useState("");
   const [manualName, setManualName] = useState("");
   const [manualGrade, setManualGrade] = useState("A");
-  const [manualCredits, setManualCredits] = useState(3);
+  const [manualCredits, setManualCredits] = useState("");
+  const [creditsError, setCreditsError] = useState("");
   const [selectedSemester, setSelectedSemester] = useState<string>("");
   const [selectedSession, setSelectedSession] = useState<string>("");
 
@@ -79,7 +80,8 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
     setManualCode("");
     setManualName("");
     setManualGrade("A");
-    setManualCredits(3);
+    setManualCredits("");
+    setCreditsError("");
     const ext = doc.extracted_data || {};
     const firstSem = Array.isArray(ext.semesters) && ext.semesters.length > 0 ? ext.semesters[0] : null;
     setSelectedSemester(ext.semester ? String(ext.semester) : (firstSem?.semester_no ? String(firstSem.semester_no) : ""));
@@ -92,18 +94,24 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
       alert("Please enter a valid Course Code (e.g. SECJ1013).");
       return;
     }
+    const credits = Number(manualCredits);
+    if (!manualCredits.trim() || !Number.isFinite(credits) || credits <= 0) {
+      setCreditsError("Credits are required.");
+      return;
+    }
     const newCourse = {
       course_code: trimmed,
       course_name: manualName.trim() || trimmed,
       grade: manualGrade.trim().toUpperCase(),
-      credit_hour: Number(manualCredits) || 3,
-      credits: Number(manualCredits) || 3,
+      credit_hour: credits,
+      credits,
       status: isPass(manualGrade, gradeScale) ? "Passed" : "Failed",
       session_semester: selectedSemester && selectedSession.trim() ? `SEM ${selectedSemester} ${selectedSession.trim()}` : undefined,
     };
     setStagedCourses(prev => [...prev, newCourse]);
     setManualCode("");
     setManualName("");
+    setManualCredits("");
     setShowAddForm(false);
   };
 
@@ -445,15 +453,18 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
                           </select>
                         </div>
                         <div>
-                          <label className="text-[11px] font-medium text-gray-600 block mb-1">Credits</label>
+                          <label className="text-[11px] font-medium text-gray-600 block mb-1">Credits *</label>
                           <input
                             type="number"
                             min="1"
                             max="12"
                             value={manualCredits}
-                            onChange={(e) => setManualCredits(Number(e.target.value))}
-                            className="w-full text-xs font-mono px-2.5 py-1.5 border border-gray-300 rounded bg-white focus:outline-indigo-500"
+                            onChange={(e) => { setManualCredits(e.target.value); setCreditsError(""); }}
+                            aria-invalid={Boolean(creditsError)}
+                            aria-describedby={creditsError ? "manual-credits-error" : undefined}
+                            className={`w-full text-xs font-mono px-2.5 py-1.5 border rounded bg-white focus:outline-indigo-500 ${creditsError ? "border-red-500" : "border-gray-300"}`}
                           />
+                          {creditsError && <p id="manual-credits-error" className="text-[11px] text-red-600 mt-1">{creditsError}</p>}
                         </div>
                       </div>
                       <div className="flex justify-end">
