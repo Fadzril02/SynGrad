@@ -187,8 +187,9 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
           course_code: String(c.course_code || "").replace(/\s+/g, "").toUpperCase() || "UNKNOWN",
           course_name: String(c.course_name || c.course_code || "Unknown Course"),
           grade: String(c.grade || "N/A").trim().toUpperCase(),
-          credit_hour: Number(c.credit_hour ?? c.credits ?? 3) || 3,
-          credits: Number(c.credits ?? c.credit_hour ?? 3) || 3,
+          // no default: the server rejects missing/invalid credits with the list of courses
+          credit_hour: c.credit_hour ?? null,
+          credits: c.credits ?? null,
           status: c.status || "Pass",
           warning: c.warning,
           session_semester: c.session_semester,

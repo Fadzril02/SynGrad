@@ -101,8 +101,9 @@ class ExtractedCourseItem(BaseModel):
     course_code: str
     course_name: Optional[str] = "Course"
     grade: str
-    credit_hour: Optional[int] = 3
-    credits: Optional[int] = None
+    # Any so finalize-approval can list every bad row in one 422 instead of a generic schema error
+    credit_hour: Optional[Any] = None
+    credits: Optional[Any] = None
     status: Optional[str] = "Pass"
     warning: Optional[str] = None
     session_semester: Optional[str] = None

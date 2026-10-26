@@ -433,7 +433,7 @@ def test_ai_missing_semester_no_stays_none_and_is_flagged(sample_scale):
     })
     assert data["semesters"][0]["semester_no"] is None
     assert data["semester"] is None
-    assert any("Invalid semester/session format" in w for w in data["warnings"])
+    assert "Missing semester number" in data["warnings"]
 
 
 def test_ai_unknown_grade_needs_review(sample_scale):
@@ -472,3 +472,17 @@ def test_ai_status_comes_from_scale_flags():
         "matric_no": "U2024001",
     })
     assert [c["status"] for c in data["courses"]] == ["Passed", "Failed", "Exempted", "In-Progress"]
+
+
+def test_guardrail_missing_semester_and_session_flagged(sample_scale):
+    slip_data = {
+        "semesters": [{
+            "semester_no": None,
+            "session": None,
+            "courses": [{"code": "CS101", "grade": "A", "credits": 3}],
+        }],
+        "matric_no": "A24CS0001",
+    }
+    warnings, needs_review = validate_slip(slip_data, sample_scale, expected_matric="A24CS0001")
+    assert needs_review is True
+    assert "Missing semester number" in warnings

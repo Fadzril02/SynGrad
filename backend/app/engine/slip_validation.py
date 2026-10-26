@@ -158,10 +158,12 @@ def validate_slip(
 
         sem_no = sem.get("semester_no")
         session = sem.get("session")
-        if sem_no is not None or session:
+        if sem_no is None:
+            sem_warn = "Missing semester number"
+        else:
             sem_warn = validate_semester_session(sem_no, session)
-            if sem_warn and sem_warn not in warnings:
-                warnings.append(sem_warn)
+        if sem_warn and sem_warn not in warnings:
+            warnings.append(sem_warn)
 
         sem_courses = sem.get("courses") or []
         for c in sem_courses:

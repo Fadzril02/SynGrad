@@ -797,6 +797,20 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
     return ExtractPDFResponse(success=True, data=extracted_data)
 
 
+def _parse_credits(course: Any) -> Optional[int]:
+    """Whole, positive credits from `credits` (else `credit_hour`); None if missing or invalid."""
+    raw = course.credits if course.credits is not None else course.credit_hour
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val <= 0 or not val.is_integer():
+        return None
+    return int(val)
+
+
 @router.post(
     "/finalize-approval",
     response_model=FinalizeApprovalResponse,
@@ -851,6 +865,14 @@ async def finalize_approval(
             detail="Missing required semester or academic_session. Both must be explicitly specified."
         )
 
+    # Every course needs whole, positive credits; reject the whole approval (nothing saved) otherwise
+    bad_credit_codes = [c.course_code for c in request.courses if _parse_credits(c) is None]
+    if bad_credit_codes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Credits missing for: {', '.join(bad_credit_codes)} — please fix and resubmit",
+        )
+
     # 1. Transform Staged Courses into ParsedLineItem objects using Tenant Grading Scale
     try:
         scale = load_scale(tenant_id, client=supabase_svc.client)
@@ -862,7 +884,7 @@ async def finalize_approval(
         for c in request.courses:
             code = c.course_code.replace(" ", "").upper()
             grade = c.grade.strip().upper()
-            credits_val = c.credits or c.credit_hour or 3
+            credits_val = _parse_credits(c)
             gp = scale.grade_points(grade, code)
             is_p = scale.is_pass(grade, code)
             in_cgpa = scale.counts_in_cgpa(grade, code)

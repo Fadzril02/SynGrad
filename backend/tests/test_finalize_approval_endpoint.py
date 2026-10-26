@@ -456,3 +456,49 @@ def test_extract_advisor_id_queries_advisors_staff_id():
         mock_client.table().select().eq.assert_called_with("user_id", "advisor-user-456")
 
 
+
+
+@pytest.mark.parametrize("bad_course", [
+    {"course_code": "SECJ1023", "grade": "B+"},                                       # missing
+    {"course_code": "SECJ1023", "grade": "B+", "credits": None, "credit_hour": None},  # explicit null
+    {"course_code": "SECJ1023", "grade": "B+", "credits": 0},                         # zero
+    {"course_code": "SECJ1023", "grade": "B+", "credits": 1.5},                       # decimal
+    {"course_code": "SECJ1023", "grade": "B+", "credits": "abc"},                     # garbage
+])
+def test_finalize_approval_bad_credits_422_saves_nothing(bad_course):
+    """No `or 3` fallback: one bad row rejects the whole approval and nothing is written."""
+    payload = {
+        "document_id": "99999999-9999-9999-9999-999999999999",
+        "matric_number": "TEST-SE24-FINAL",
+        "academic_session": "2024/2025",
+        "semester": 1,
+        "courses": [
+            {"course_code": "SECJ1013", "grade": "A", "credits": 3},
+            bad_course,
+            {"course_code": "SECJ2013", "grade": "A"},
+        ],
+    }
+    patch_target = "app.v1.endpoints.audit.supabase_svc" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit.supabase_svc"
+    patch_id_target = "app.v1.endpoints.audit._check_advisor_identity" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit._check_advisor_identity"
+
+    with patch(patch_target) as mock_svc, patch(patch_id_target):
+        mock_svc.client = MagicMock()
+        response = client.post("/api/v1/audit/finalize-approval", json=payload, headers=AUTH_HEADERS)
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Credits missing for: SECJ1023, SECJ2013 — please fix and resubmit"
+        mock_svc.persist_audit_results.assert_not_called()
+        mock_svc.get_or_create_student.assert_not_called()
+        mock_svc.delete_file_from_storage.assert_not_called()
+        mock_svc.client.table.return_value.update.assert_not_called()
+
+
+def test_finalize_approval_credit_hour_used_when_credits_absent():
+    try:
+        from app.v1.endpoints.audit import _parse_credits
+    except ImportError:
+        from backend.app.v1.endpoints.audit import _parse_credits
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credit_hour=4)) == 4
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits="3", credit_hour=4)) == 3
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits=3.0)) == 3
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A")) is None
