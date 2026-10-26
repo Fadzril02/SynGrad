@@ -8,3 +8,4 @@
 - Stack: React/Vite (Vercel), FastAPI (Render), Supabase, Groq, Resend.
 - Before saying done: run `py -3.12 -m pytest backend/tests -q` and `npm run build`; both must pass.
 - Keep answers short; list changed files and test results.
+- Skills: ponytail for every change; /ponytail-review before commit; verification-before-completion before saying done; diagnosing-bugs for errors; test-driven-development for engine logic; frontend-design + DesignSystem.md for UI; code-review + deploy-checklist before merging to main.

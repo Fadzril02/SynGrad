@@ -440,6 +440,75 @@ async def extract_transcript_from_storage(
         )
 
 
+def _course_status(grade: str, code: str, scale: Any) -> Optional[str]:
+    """Status from the tenant grading scale only; None if the scale doesn't know the grade."""
+    try:
+        is_p = scale.is_pass(grade, code)
+        in_cgpa = scale.counts_in_cgpa(grade, code)
+        as_comp = scale.counts_as_completed(grade, code)
+    except ValueError:
+        return None
+    if is_p and not in_cgpa and as_comp:
+        return "Exempted"
+    if is_p:
+        return "Passed"
+    if in_cgpa:
+        return "Failed"
+    return "In-Progress"  # not passed and not graded (e.g. withdrawn / incomplete)
+
+
+def _build_ai_semesters(semesters_data: List[Dict[str, Any]], scale: Any):
+    """
+    Shared course builder for the 'ai' and 'ai_scan' readers.
+    Missing credits / semester_no stay None so validate_slip flags them.
+    """
+    semesters_list: List[Dict[str, Any]] = []
+    courses_payload: List[Dict[str, Any]] = []
+    for sem_obj in semesters_data:
+        s_num = sem_obj.get("semester_no")
+        s_sess = sem_obj.get("session", "")
+        try:
+            norm_s = normalize_semester(f"SEM {s_num} {s_sess}")
+        except Exception:
+            norm_s = f"SEM {s_num} {s_sess}"
+
+        sem_courses_payload = []
+        for c in sem_obj.get("courses", []):
+            c_code = (c.get("code") or "").replace(" ", "").upper()
+            c_grade = (c.get("grade") or "").strip().upper()
+            c_creds = c.get("credits")
+            c_creds_val = int(c_creds) if isinstance(c_creds, (int, float)) and float(c_creds).is_integer() else c_creds
+
+            c_status = _course_status(c_grade, c_code, scale)
+            c_warning = None
+            if c_status is None:
+                c_status = "Needs review"
+                c_warning = f"Grade '{c_grade}' is not in the tenant grading scale"
+
+            item_dict = {
+                "course_code": c_code,
+                "course_name": c.get("name", c_code),
+                "grade": c_grade,
+                "credit_hour": c_creds_val,
+                "credits": c_creds_val,
+                "status": c_status,
+                "warning": c_warning,
+                "session_semester": norm_s,
+                "is_ai_parsed": True,
+            }
+            sem_courses_payload.append(item_dict)
+            courses_payload.append(item_dict)
+
+        semesters_list.append({
+            "semester_no": s_num,
+            "session": s_sess,
+            "courses": sem_courses_payload,
+            "printed_gpa": sem_obj.get("printed_gpa"),
+            "printed_cgpa": sem_obj.get("printed_cgpa"),
+        })
+    return semesters_list, courses_payload
+
+
 def run_slip_extraction(
     pdf_bytes: bytes,
     tenant_id: str,
@@ -592,59 +661,7 @@ def run_slip_extraction(
         matric_number = ai_data.get("matric_no")
         student_name = None
 
-        for sem_obj in semesters_data:
-            s_num = sem_obj.get("semester_no", 1)
-            s_sess = sem_obj.get("session", "")
-            try:
-                norm_s = normalize_semester(f"SEM {s_num} {s_sess}")
-            except Exception:
-                norm_s = f"SEM {s_num} {s_sess}"
-
-            sem_courses_payload = []
-            for c in sem_obj.get("courses", []):
-                c_code = c.get("code", "").replace(" ", "").upper()
-                c_grade = c.get("grade", "").strip().upper()
-                c_creds = c.get("credits", 3)
-
-                try:
-                    is_p = scale.is_pass(c_grade, c_code)
-                    in_cgpa = scale.counts_in_cgpa(c_grade, c_code)
-                    as_comp = scale.counts_as_completed(c_grade, c_code)
-                    if is_p and not in_cgpa and as_comp:
-                        c_status = "Exempted"
-                    elif is_p:
-                        c_status = "Passed"
-                    elif c_grade in {"TD", "TS"}:
-                        c_status = "In-Progress"
-                    else:
-                        c_status = "Failed"
-                except Exception:
-                    c_status = "Passed" if c_grade in {"A+", "A", "A-", "B+", "B", "B-", "C+", "C"} else "Failed"
-
-                c_creds_val = int(c_creds) if isinstance(c_creds, (int, float)) and float(c_creds).is_integer() else c_creds
-
-                item_dict = {
-                    "course_code": c_code,
-                    "course_name": c.get("name", c_code),
-                    "grade": c_grade,
-                    "credit_hour": c_creds_val,
-                    "credits": c_creds_val,
-                    "status": c_status,
-                    "warning": None,
-                    "session_semester": norm_s,
-                    "is_ai_parsed": True,
-                }
-                sem_courses_payload.append(item_dict)
-                courses_payload.append(item_dict)
-
-            semesters_list.append({
-                "semester_no": s_num,
-                "session": s_sess,
-                "courses": sem_courses_payload,
-                "printed_gpa": sem_obj.get("printed_gpa"),
-                "printed_cgpa": sem_obj.get("printed_cgpa"),
-            })
-
+        semesters_list, courses_payload = _build_ai_semesters(semesters_data, scale)
         if semesters_list:
             sem_num = semesters_list[0]["semester_no"]
             session_name = semesters_list[0]["session"]
@@ -680,59 +697,7 @@ def run_slip_extraction(
         initial_warnings = list(scanned_data.get("warnings", []))
         student_name = None
 
-        for sem_obj in semesters_data:
-            s_num = sem_obj.get("semester_no", 1)
-            s_sess = sem_obj.get("session", "")
-            try:
-                norm_s = normalize_semester(f"SEM {s_num} {s_sess}")
-            except Exception:
-                norm_s = f"SEM {s_num} {s_sess}"
-
-            sem_courses_payload = []
-            for c in sem_obj.get("courses", []):
-                c_code = c.get("code", "").replace(" ", "").upper()
-                c_grade = c.get("grade", "").strip().upper()
-                c_creds = c.get("credits", 3)
-
-                try:
-                    is_p = scale.is_pass(c_grade, c_code)
-                    in_cgpa = scale.counts_in_cgpa(c_grade, c_code)
-                    as_comp = scale.counts_as_completed(c_grade, c_code)
-                    if is_p and not in_cgpa and as_comp:
-                        c_status = "Exempted"
-                    elif is_p:
-                        c_status = "Passed"
-                    elif c_grade in {"TD", "TS"}:
-                        c_status = "In-Progress"
-                    else:
-                        c_status = "Failed"
-                except Exception:
-                    c_status = "Passed" if c_grade in {"A+", "A", "A-", "B+", "B", "B-", "C+", "C"} else "Failed"
-
-                c_creds_val = int(c_creds) if isinstance(c_creds, (int, float)) and float(c_creds).is_integer() else c_creds
-
-                item_dict = {
-                    "course_code": c_code,
-                    "course_name": c.get("name", c_code),
-                    "grade": c_grade,
-                    "credit_hour": c_creds_val,
-                    "credits": c_creds_val,
-                    "status": c_status,
-                    "warning": None,
-                    "session_semester": norm_s,
-                    "is_ai_parsed": True,
-                }
-                sem_courses_payload.append(item_dict)
-                courses_payload.append(item_dict)
-
-            semesters_list.append({
-                "semester_no": s_num,
-                "session": s_sess,
-                "courses": sem_courses_payload,
-                "printed_gpa": sem_obj.get("printed_gpa"),
-                "printed_cgpa": sem_obj.get("printed_cgpa"),
-            })
-
+        semesters_list, courses_payload = _build_ai_semesters(semesters_data, scale)
         if semesters_list:
             sem_num = semesters_list[0]["semester_no"]
             session_name = semesters_list[0]["session"]

@@ -397,3 +397,78 @@ def test_multi_semester_saved_correctly(sample_scale):
         assert course1.semester == "SEM 1 2023/2024"
         assert course2.semester == "SEM 2 2023/2024"
 
+
+
+def _run_ai_extraction(scale, ai_output):
+    with patch("pymupdf.open"), \
+         patch.object(audit.PDFExtractor, "extract_text_lines_from_bytes", return_value=["SOME SLIP TEXT"]), \
+         patch.object(audit, "load_scale", return_value=scale), \
+         patch.object(audit, "extract_with_llm", return_value=ai_output):
+        return audit.run_slip_extraction(b"%PDF-1.4 mock", tenant_id="OTHER_UNI", expected_matric="U2024001")
+
+
+def test_ai_missing_credits_stays_none_and_is_flagged(sample_scale):
+    data = _run_ai_extraction(sample_scale, {
+        "semesters": [{
+            "semester_no": 1,
+            "session": "2024/2025",
+            "courses": [{"code": "CS101", "name": "Intro to CS", "grade": "A"}],
+        }],
+        "matric_no": "U2024001",
+    })
+    course = data["courses"][0]
+    assert course["credits"] is None
+    assert course["credit_hour"] is None
+    assert data["needs_review"] is True
+    assert any("Missing credits for course 'CS101'" in w for w in data["warnings"])
+
+
+def test_ai_missing_semester_no_stays_none_and_is_flagged(sample_scale):
+    data = _run_ai_extraction(sample_scale, {
+        "semesters": [{
+            "session": "2024/2025",
+            "courses": [{"code": "CS101", "name": "Intro to CS", "credits": 3, "grade": "A"}],
+        }],
+        "matric_no": "U2024001",
+    })
+    assert data["semesters"][0]["semester_no"] is None
+    assert data["semester"] is None
+    assert any("Invalid semester/session format" in w for w in data["warnings"])
+
+
+def test_ai_unknown_grade_needs_review(sample_scale):
+    data = _run_ai_extraction(sample_scale, {
+        "semesters": [{
+            "semester_no": 1,
+            "session": "2024/2025",
+            # 'B-' was "Passed" under the old hardcoded list but isn't in this tenant's scale
+            "courses": [
+                {"code": "CS101", "name": "Intro to CS", "credits": 3, "grade": "Z"},
+                {"code": "CS102", "name": "Data", "credits": 3, "grade": "B-"},
+            ],
+        }],
+        "matric_no": "U2024001",
+    })
+    for course in data["courses"]:
+        assert course["status"] == "Needs review"
+        assert "not in the tenant grading scale" in course["warning"]
+    assert data["needs_review"] is True
+    assert any("Unknown grade 'Z'" in w for w in data["warnings"])
+
+
+def test_ai_status_comes_from_scale_flags():
+    scale = GradingScale("T", [
+        GradeDefinition("A", 4.0, 1, True, True, True),
+        GradeDefinition("F", 0.0, 2, False, True, False),
+        GradeDefinition("EX", None, None, True, False, True),
+        GradeDefinition("W", None, None, False, False, False),
+    ])
+    data = _run_ai_extraction(scale, {
+        "semesters": [{
+            "semester_no": 1,
+            "session": "2024/2025",
+            "courses": [{"code": f"C{i}", "name": g, "credits": 3, "grade": g} for i, g in enumerate(["A", "F", "EX", "W"])],
+        }],
+        "matric_no": "U2024001",
+    })
+    assert [c["status"] for c in data["courses"]] == ["Passed", "Failed", "Exempted", "In-Progress"]
