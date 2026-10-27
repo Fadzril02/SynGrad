@@ -86,10 +86,12 @@ Constraint until revenue: stay on free tiers. No cron/polling.
 | — | Advising notes + email notify; upload security (migs 29–30) | Done / 30 pending apply |
 | 4 | Template editor + manual elective override | Done (migs 33–34) |
 | — | Universal slip reader, scanned slips, Slip Lab, IC redaction, purge on reject, cold-start notice | Done |
-| 5 | Plans & limits | Next |
-| 6 | Stripe billing | |
-| 6b | Pre-launch polish + performance pass (dead code, UTM prefix in DegreeAuditView, `/health` leak, Render paid plan, backups) | |
-| 7 | Public launch (legal: SSM, PDPA privacy policy + consent) | |
+| 5 | Staging tests | Next |
+| 6 | Merge `dev` → `main` | |
+| 7 | Week 2: PDPA privacy policy + consent; multi-institution blockers | |
+| 8 | Single-player phases 1–4 (see Architecture "Planned") | |
+| 9 | Payments (plans & limits, billing) | |
+| 10 | Semester planner | |
 
 Full pre-launch list: project doc `claude/launch-checklist.md`.
 

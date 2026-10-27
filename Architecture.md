@@ -2,6 +2,29 @@
 
 Updated 2026-10-26. Product scope: `PRD.md`. Source of truth for schema: `supabase/migrations/`.
 
+## System flow (current)
+1. Advisor signs up via invite link.
+2. Advisor uploads course structure CSV.
+3. Advisor creates a cohort code.
+4. Student signs up: cohort code + email domain + matric format check.
+5. Student uploads a result slip.
+6. Fraud check.
+7. Reader routing: `rules` (text parser) / `ai` (LLM, IC numbers redacted first) / `ai_scan` (vision for scanned slips).
+8. Guardrails validate codes, credits, grades: they **flag, never correct**.
+9. Student verifies the extracted rows.
+10. Advisor approves (422 if any credits missing; slip purged) or rejects (slip purged).
+11. Degree audit + cohort roster update.
+
+Cold start: frontend calls `warmUpBackend` and shows a notice while Render wakes. `/lab` (Slip Lab) is staging only.
+
+## Planned (not built)
+- **Single-player mode:** any email, no cohort/advisor; pick Institution → Programme → Intake.
+- **Curriculum library:** structures per institution + programme + intake, versioned, never overwritten. Student edits = private copy. Trust levels: extracted → student-confirmed → advisor-verified. Promote when 2 identical student versions exist or an advisor approves.
+- **Handbook extraction:** file-hash cache → PDF text + regex → LLM strict JSON in the existing CSV format → `CSVCourseParser` → credit-total checks → review only flagged rows. Unparseable = "not checked".
+- **Grade scale:** presets (standard 4.00, UM, polytechnic, custom) + pass grade + special codes; auto-pick by matching the printed GPA; add an in-progress flag (removes hardcoded TD/TS).
+- **Retired courses:** "retired from intake X"; `course_equivalences` table (old↔new code, institution, from intake); unmapped → "Not counted — needs review".
+- **Semester load:** min/max credits per semester (+ override, + CGPA-based max); credit gates via existing `min_credits`.
+
 ## 1. Topology
 
 ```
