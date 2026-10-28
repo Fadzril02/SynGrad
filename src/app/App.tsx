@@ -94,10 +94,8 @@ export default function App() {
                 }
               />
 
-              {/* ── Staging Slip Lab ────────────────────────────────────────── */}
-              {(import.meta.env.VITE_ENVIRONMENT === 'staging' || import.meta.env.MODE === 'staging') && (
-                <Route path="/lab" element={<SlipLab />} />
-              )}
+              {/* ── Slip Lab (gated by backend: ENVIRONMENT + LAB_ALLOWED_EMAILS) ── */}
+              <Route path="/lab" element={<SlipLab />} />
 
               {/* ── Catch-All ───────────────────────────────────────────────── */}
               <Route path="*" element={<Navigate to="/" replace />} />

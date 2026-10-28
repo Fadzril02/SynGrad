@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Navigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
 import { apiClient } from '../../../lib/api';
 import { toast } from 'sonner';
@@ -50,14 +49,7 @@ interface ExtractResult {
 }
 
 export function SlipLab() {
-  const isStaging =
-    import.meta.env.VITE_ENVIRONMENT === 'staging' ||
-    import.meta.env.MODE === 'staging';
-
-  if (!isStaging) {
-    return <Navigate to="/" replace />;
-  }
-
+  const [isUnavailable, setIsUnavailable] = useState<boolean>(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [selectedTenant, setSelectedTenant] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
@@ -134,6 +126,11 @@ export function SlipLab() {
       toast.success('Extraction completed without persistence.');
     } catch (err: any) {
       console.error('[SlipLab] Extraction failed:', err);
+      const status = err.response?.status;
+      if (status === 404 || status === 403) {
+        setIsUnavailable(true);
+        return;
+      }
       const detail =
         err.response?.data?.detail ||
         err.message ||
@@ -156,6 +153,14 @@ export function SlipLab() {
     }
     return String(timing || 'N/A');
   };
+
+  if (isUnavailable) {
+    return (
+      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center text-sm text-gray-600">
+        Slip Lab is not available here.
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-gray-900 pb-16">
