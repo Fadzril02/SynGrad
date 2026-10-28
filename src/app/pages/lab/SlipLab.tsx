@@ -19,7 +19,6 @@ import {
 interface Tenant {
   id: string;
   name?: string;
-  slip_profile?: string | null;
 }
 
 interface CourseItem {
@@ -63,8 +62,8 @@ export function SlipLab() {
       setIsLoadingTenants(true);
       try {
         const { data, error } = await supabase
-          .from('tenants')
-          .select('id, name, slip_profile')
+          .from('tenants_public')
+          .select('id, name')
           .order('id');
         if (error) {
           console.error('[SlipLab] Failed to load tenants:', error);
@@ -208,7 +207,7 @@ export function SlipLab() {
               >
                 {tenants.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.id} {t.name ? `(${t.name})` : ''} — {t.slip_profile ? `Rules Profile: ${t.slip_profile}` : 'Universal AI Reader'}
+                    {t.id} {t.name ? `(${t.name})` : ''}
                   </option>
                 ))}
               </select>
