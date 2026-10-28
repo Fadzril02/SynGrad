@@ -12,9 +12,9 @@
 
 ---
 
-## 0. Working Rules (current, 2026-10-01) — read this first
+## 0. Working Rules (current, 2026-10-28) — read this first
 
-These five override anything below that conflicts.
+CLAUDE.md holds the binding short rules; this file is the detail. These five override anything below that conflicts.
 
 1. **Zero-Waste pipeline.** Deterministic regex first. LLM (Groq) only for lines regex can't parse.
 2. **Multi-university.** Never hardcode matric format, email domain, grading scale, course codes or session formats in code or CHECK constraints. Read from `tenants`, `grade_scales`, templates.
@@ -27,7 +27,7 @@ Also:
 - Free tiers only (Supabase, Render, Vercel, Resend). No cron, no polling, no new paid service.
 - No faculty layer. Advisor ↔ student only.
 - Verify "fixed in code" separately from "live in production".
-- UI palette: original SynGrad blue (users preferred it). Tailwind custom grey is `ink`, not `slate`.
+- UI palette: original SynGrad blue `blue-900` (users preferred it). Tailwind custom grey is `ink`, not `slate`. Full tokens: DesignSystem.md.
 
 ---
 
@@ -40,8 +40,8 @@ Every pull request, architectural decision, and line of code committed to this r
 │                      THE FOUR PILLARS OF SYNGRAD                          │
 ├─────────────────────────────────────┬─────────────────────────────────────┤
 │ 1. ACADEMIC MINIMALISM (UI/UX)      │ 2. DATA INTEGRITY OVER UX           │
-│ Clean institutional utility. Deep   │ Hard database constraints govern.   │
-│ navy & white palette. Zero fluff.   │ Never silently fail or default.     │
+│ Clean institutional utility. Blue-  │ Hard database constraints govern.   │
+│ 900 & white palette. Zero fluff.    │ Never silently fail or default.     │
 ├─────────────────────────────────────┼─────────────────────────────────────┤
 │ 3. ZERO-TRUST CLIENT                │ 4. VARIABLE-DRIVEN RENDERING        │
 │ The frontend is compromised. Audit  │ No hardcoded fallbacks. Everything  │
@@ -55,9 +55,9 @@ Every pull request, architectural decision, and line of code committed to this r
 
 SynGrad is an institutional academic advising platform, not an entertainment app, marketing website, or generic venture-funded SaaS product. Its visual design must command institutional authority, clarity, and utilitarian density.
 
-### 2.1 The Palette
-* **Primary Deep Navy:** `bg-blue-950` (`#0F172A` / `#172554`), `text-blue-900` (`#1E3A8A`), `border-blue-900`.
-* **Institutional Crimson Accent:** `#990033` (UTM Maroon), used sparingly for primary institutional branding and critical alert banners.
+### 2.1 The Palette (source of truth: DesignSystem.md)
+* **Primary:** `bg-blue-900` (`#1E3A8A`), hover `bg-blue-800`; `text-blue-900`, `border-blue-900`.
+* **Legacy maroon/gold** (`#990033` / `#FFCC00`, old UTM branding) survives in the legacy `Button`, `CardTitle`, `AppLayout`. Don't use it in new UI.
 * **Functional State Colors:**
   * **Critical Error / Forgery:** `bg-rose-50`, `border-rose-200`, `text-rose-700` (Never neon red).
   * **Verified / Active:** `bg-emerald-50`, `border-emerald-200`, `text-emerald-700`.
@@ -82,33 +82,12 @@ In academic record management, **a clean error message is infinitely better than
 
 ### 3.1 Hard Database Constraints Govern
 * Frontend form validation is an ergonomic convenience; the PostgreSQL database schema is the sole authoritative source of truth.
-* Primary Key rules and Check Constraints (such as `CHECK (matric_no ~* '^[A-Z]\d{2}[A-Z]{2}\d{4}$')`) must never be loosened to accommodate unvalidated client requests.
+* Primary keys and CHECK constraints must never be loosened to accommodate unvalidated client requests, but they must stay university-neutral: no tenant-specific formats in CHECKs (e.g. the matric check is the generic `^[A-Z0-9]{5,15}$` since migration 09; per-tenant formats live in `tenants`).
 
 ### 3.2 Strict Prohibition of Silent Fallbacks
 * **No Default UUIDs:** If a request payload is missing an entity ID (e.g., `template_id`, `cohort_id`, or `advisor_staff_id`), the server must reject the call with HTTP `422 Unprocessable Entity`. Generating a random UUID (`uuid4()`) as a fallback is strictly prohibited.
 * **No Fake Academic Records:** If a course code cannot be extracted from a transcript, it must be flagged for human review (`processing_status = 'Pending_Advisor_Approval'`), never synthesized or guessed.
-* **Ruthless Cache Invalidation:** When user sessions expire or errors occur during sign-out, the client must unconditionally wipe local tokens. The `finally` block in [`AuthContext.tsx`](file:///d:/smart-aa-system/src/context/AuthContext.tsx) enforces this pattern:
-
-```typescript
-// Enforce ruthless local cache wipe regardless of server API errors
-try {
-  setIsLoading(true);
-  await supabase.auth.signOut();
-} catch (error) {
-  console.warn("[AuthContext] Server signOut failed, forcing local wipe:", error);
-} finally {
-  setUser(null);
-  setProfile(null);
-  // Ruthlessly wipe all Supabase tokens from browser cache
-  Object.keys(localStorage).forEach((key) => {
-    if (key.startsWith('sb-')) {
-      localStorage.removeItem(key);
-    }
-  });
-  setIsLoading(false);
-  window.location.href = '/';
-}
-```
+* **Ruthless Cache Invalidation:** Sign-out must wipe local state unconditionally, whatever the server says. `signOut` in [`AuthContext.tsx`](src/context/AuthContext.tsx) first clears all `localStorage`, `sessionStorage` and cookies, resets React auth state, and only then calls `supabase.auth.signOut()` (a server failure is logged, not blocking).
 
 ---
 
@@ -118,7 +97,7 @@ The frontend client operates in an untrusted user environment. All student submi
 
 ### 4.1 Provenance Tracking & The Tamper Trap
 * When students review OCR-extracted records in the verification modal, direct edits to course codes or grades must **never overwrite the extracted ground truth in place**.
-* The handler [`handleStagedDataChange`](file:///d:/smart-aa-system/src/app/pages/student/StudentPortal.tsx#L286-L301) must immediately preserve original AI values and flag the record:
+* The handler `handleStagedDataChange` in [`StudentPortal.tsx`](src/app/pages/student/StudentPortal.tsx) must immediately preserve original AI values and flag the record:
 
 ```typescript
 // MANDATORY PROVENANCE LOCK
@@ -133,12 +112,12 @@ newData.courses[index].is_altered = true;
 newData.courses[index][field] = value.toUpperCase();
 ```
 
-* In the Advisor's [`CorrectionsQueue.tsx`](file:///d:/smart-aa-system/src/app/pages/advisor/CorrectionsQueue.tsx), any record with `is_altered: true` or `fraud_flag: true` triggers high-contrast system alerts and renders the original document PDF side-by-side with student claims.
+* In the Advisor's [`CorrectionsQueue.tsx`](src/app/pages/advisor/CorrectionsQueue.tsx), a document with `fraud_flag` shows a high-contrast alert next to the original document.
 
 ### 4.2 Backend JWT Cross-Referencing
 * The FastAPI backend never trusts identity claims passed in JSON request bodies.
-* For every advisor mutation (`/finalize-approval`, `/extract`, `/process-storage`), the dependency [`verify_advisor_jwt`](file:///d:/smart-aa-system/backend/app/core/auth.py) decodes the cryptographically signed JWT via live JWKS, and `_check_advisor_identity` verifies that the JWT email matches the claimed `advisor_id` in the database.
-* Mismatched identities immediately result in an immutable HTTP `403 Forbidden` response.
+* Every `/audit/*` mutation (`/extract`, `/finalize-approval`, `/reject-document`, `/purge-document`, `/submit-verification`) depends on [`verify_advisor_jwt`](backend/app/core/auth.py), which verifies the ES256 JWT via the Supabase JWKS. The caller is resolved from the JWT `sub` against `advisors.user_id` / `students.user_id`, and document access goes through `_load_authorized_document()`.
+* A caller who doesn't own the record gets HTTP `403 Forbidden`.
 
 ---
 
@@ -171,7 +150,7 @@ SynGrad is a multi-tenant blueprint engine designed to support multiple facultie
   ```
 
 ### 5.2 Dynamic Form Configuration
-* The student registration form must never offer dropdowns for syllabus versions. By validating the advisor's 6-character `cohort_code`, the system automatically resolves the linked `degree_templates` row and injects the proper blueprint keys into the student's record.
+* The student registration form must never offer dropdowns for syllabus versions. By validating the advisor's `cohort_code`, the system automatically resolves the linked `degree_templates` row and injects the proper blueprint keys into the student's record.
 
 ---
 
@@ -182,30 +161,32 @@ backend/app/
   core/        auth.py (JWKS ES256), config.py (settings, CORS regex), supabase_client.py
   engine/      extractor.py, parsers/malaysian_regex.py (slip regex), parsers/csv_course_parser.py,
                grading.py (tenant grade scale, repeat policy), graph_resolver.py (prereqs),
-               llm_fallback.py (Groq, unparsed lines only)
+               llm_fallback.py (Groq, unparsed lines only), progress.py, slip_pipeline.py,
+               slip_validation.py, universal_reader.py, scanned_reader.py
   schemas/     audit.py, course.py
-  v1/endpoints/ audit.py, register.py, courses.py, advising.py, students.py, health.py
+  v1/endpoints/ audit.py, register.py, courses.py, advising.py, students.py, health.py, lab.py
 backend/tests/ pytest; conftest stubs _load_authorized_document unless marked real_doc_auth
 
 src/
   app/routes.tsx, app/App.tsx
-  app/pages/landing/*        landing sections (FoundingAdvisorCallout to be removed)
-  app/pages/student/*        StudentPortal (upload + verify), DegreeAuditView, AcademicHistoryView,
-                             AdvisingNotesView, CgpaCalculatorView, StudentDashboardView
-  app/pages/advisor/*        AdvisorPortal/Layout, AdvisorDashboard, CorrectionsQueue, StudentsList, StudentView
-  app/pages/admin/*          curriculum/intake/elective/prereq tools
+  app/pages/landing/*        landing sections (FoundingAdvisorCallout.tsx is unused)
+  app/pages/student/*        StudentPortal (upload + verify), StudentUploadSlip, DegreeAuditView,
+                             AcademicHistoryView, AdvisingNotesView, CgpaCalculatorView, StudentDashboardView
+  app/pages/advisor/*        AdvisorPortal/Layout, AdvisorDashboard, CorrectionsQueue, StudentsList, StudentView,
+                             CurriculumTemplatesView
+  app/pages/lab/SlipLab.tsx  slip extraction lab
   pages/auth/*               StudentAuth, AdvisorLogin, CompleteRegistration
   context/AuthContext.tsx    profile fetch deferred with setTimeout inside onAuthStateChange
-  lib/api.ts                 backend client (Bearer token); lib/gradeScale.ts; lib/tenants.ts; lib/supabase.ts
+  lib/api.ts                 backend client (Bearer token); lib/gradeScale.ts; lib/tenants.ts; lib/supabase.ts; lib/semester.ts
 
-supabase/migrations/         NN_name.sql, current head = 30
+supabase/migrations/         NN_name.sql, current head = 36
 ```
 
 ---
 
 ## 7. Pre-merge Checklist
 
-* [ ] `npm run build` clean; `pytest` green (93+).
+* [ ] `npm run build` clean; `py -3.12 -m pytest backend/tests -q` green (178+).
 * [ ] No university constants: grep for `UTM`, `graduate.utm.my`, `SECJ`, `SCS`, matric regex literals, `'2024/2025'`, `|| 1`.
 * [ ] New table: RLS enabled + policies using the `my_*()` helpers; anon gets nothing; views use `security_invoker = true`.
 * [ ] New endpoint: JWT dependency; identity from JWT/DB; document access via `_load_authorized_document()`.
