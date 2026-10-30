@@ -163,21 +163,6 @@ class FinalizeApprovalResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
-class PurgeDocumentRequest(BaseModel):
-    document_id: Optional[str] = Field(None, description="UUID of target uploaded document")
-    matric_no: Optional[str] = Field(None, description="Student matric number")
-    admin_staff_id: Optional[str] = Field("ADMIN", description="Staff ID of administrator triggering the purge")
-
-
-class PurgeDocumentResponse(BaseModel):
-    success: bool
-    message: str
-    document_id: str
-    purged_file_path: Optional[str] = None
-    storage_deleted: bool = False
-    processing_status: str
-
-
 class SubmitVerificationRequest(BaseModel):
     document_id: str = Field(..., description="UUID of the uploaded document being verified by the student")
     courses: List[Dict[str, Any]] = Field(..., description="Student-reviewed course rows (same order as extracted rows)")

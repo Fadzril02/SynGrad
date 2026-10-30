@@ -23,8 +23,6 @@ try:
         DegreeAuditResponse,
         AuditSummary,
         CourseAuditResult,
-        PurgeDocumentRequest,
-        PurgeDocumentResponse,
         FinalizeApprovalRequest,
         AuditApprovalRequest,
         FinalizeApprovalResponse,
@@ -40,7 +38,6 @@ try:
     from app.engine.parsers.malaysian_regex import MalaysianTranscriptParser
     from app.engine.grading import load_scale, GradingScale, normalize_semester, select_attempts_by_repeat_policy
     from app.engine.graph_resolver import PrerequisiteGraphResolver
-    from app.engine.llm_fallback import MicroLLMFallback
     from app.engine.universal_reader import extract_with_llm, looks_like_national_id, redact_personal_ids
     from app.engine.scanned_reader import extract_scanned_transcript
     from app.engine.slip_validation import validate_slip
@@ -54,8 +51,6 @@ except ImportError:
         DegreeAuditResponse,
         AuditSummary,
         CourseAuditResult,
-        PurgeDocumentRequest,
-        PurgeDocumentResponse,
         FinalizeApprovalRequest,
         AuditApprovalRequest,
         FinalizeApprovalResponse,
@@ -71,7 +66,6 @@ except ImportError:
     from backend.app.engine.parsers.malaysian_regex import MalaysianTranscriptParser
     from backend.app.engine.grading import load_scale, GradingScale, normalize_semester, select_attempts_by_repeat_policy
     from backend.app.engine.graph_resolver import PrerequisiteGraphResolver
-    from backend.app.engine.llm_fallback import MicroLLMFallback
     from backend.app.engine.universal_reader import extract_with_llm, looks_like_national_id, redact_personal_ids
     from backend.app.engine.scanned_reader import extract_scanned_transcript
     from backend.app.engine.slip_validation import validate_slip
@@ -218,7 +212,6 @@ def _mark_document_failed(document_id: str, message: str) -> None:
         }).eq("id", document_id).execute()
     except Exception as e:
         print(f"[Extract] Failed to mark document {document_id} as Extraction_Failed: {e}")
-llm_fallback = MicroLLMFallback()
 
 def fetch_and_merge_historical_records(matric_no: str, new_records: List[ParsedLineItem], tenant_id: str) -> List[ParsedLineItem]:
     if not supabase_svc.client or not matric_no:
@@ -995,52 +988,29 @@ async def finalize_approval(
             detail=str(ve)
         )
 
-    # 5. Update uploaded_documents status to 'Approved'
+    # 5. Update uploaded_documents status to 'Approved' — must succeed, or we must not report Approved
     try:
-        if supabase_svc.client:
-            supabase_svc.client.table("uploaded_documents").update({
-                "processing_status": "Approved"
-            }).eq("id", request.document_id).execute()
+        supabase_svc.client.table("uploaded_documents").update({
+            "processing_status": "Approved"
+        }).eq("id", request.document_id).execute()
     except Exception as doc_update_err:
-        print(f"[Document Status Update Warning] {doc_update_err}")
+        print(f"[Document Status Update ERROR] {doc_update_err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Records saved but document status could not be set to Approved. Please retry.",
+        )
 
-    # 6. Relocated Automatic Storage Purge on Advisor Approval (Zero-Waste Data Retention)
-    # The file should ONLY be deleted after the advisor has visually verified it
-    # and the data is successfully upserted into the database.
+    # 6. Purge the slip now the advisor has verified it. Failure keeps file_path and never blocks approval.
     purge_successful = False
     try:
-        target_path = getattr(request, "storage_path", None) or getattr(request, "file_path", None)
-        if not target_path and supabase_svc.client and request.document_id:
-            try:
-                doc_query = (
-                    supabase_svc.client.table("uploaded_documents")
-                    .select("file_path")
-                    .eq("id", request.document_id)
-                    .limit(1)
-                    .execute()
-                )
-                if doc_query.data and doc_query.data[0].get("file_path"):
-                    target_path = doc_query.data[0]["file_path"]
-            except Exception as doc_fetch_err:
-                print(f"[Purge Path Resolution Warning] {doc_fetch_err}")
-
-        if target_path and target_path not in {"", "[PURGED]"}:
-            _bucket = "academic-slips"  # the only slip bucket; stored paths look like "slips/<matric>_<ts>.pdf"
-            supabase_svc.delete_file_from_storage(
-                bucket_name=_bucket,
-                file_path=target_path
-            )
-
-        if supabase_svc.client and request.document_id:
-            purge_res = supabase_svc.purge_uploaded_document_file(
-                document_id=request.document_id,
-                matric_no=matric_number,
-                admin_staff_id=advisor_id or "ADMIN"
-            )
-            purge_successful = purge_res.get("success", False)
-            print(f"[Automatic Purge] Document '{request.document_id}' purged successfully.")
+        purge_res = supabase_svc.purge_uploaded_document_file(
+            document_id=request.document_id,
+            matric_no=matric_number,
+            admin_staff_id=advisor_id or "ADMIN"
+        )
+        purge_successful = purge_res.get("success", False)
     except Exception as purge_err:
-        print(f"[Auto-Purge OUTER WARNING] Unexpected error during storage cleanup: {purge_err}")
+        print(f"[Auto-Purge ERROR] Document '{request.document_id}': {purge_err}")
 
     return FinalizeApprovalResponse(
         success=True,
@@ -1056,47 +1026,6 @@ async def finalize_approval(
         warning=cgpa_warning,
         warnings=[cgpa_warning] if cgpa_warning else []
     )
-
-
-@router.post(
-    "/purge-document",
-    response_model=PurgeDocumentResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Admin purge of raw transcript PDF after advisor approval"
-)
-async def purge_document(
-    request: PurgeDocumentRequest,
-    jwt_payload: dict = Depends(verify_advisor_jwt),
-):
-    """
-    Data Retention & Privacy Enforcement:
-    1. Validates that the target document is marked 'Approved'.
-    2. Deletes raw transcript PDF bytes from Supabase Storage.
-    3. Sets file_path = '[PURGED]' in uploaded_documents.
-    4. Records an immutable 'DELETE' entry in system_audit_logs.
-    """
-    try:
-        res = supabase_svc.purge_uploaded_document_file(
-            document_id=request.document_id,
-            matric_no=request.matric_no,
-            admin_staff_id=request.admin_staff_id or "ADMIN"
-        )
-        return PurgeDocumentResponse(**res)
-    except PermissionError as pe:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(pe)
-        )
-    except ValueError as ve:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(ve)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Purge operation failed: {str(e)}"
-        )
 
 
 @router.post(

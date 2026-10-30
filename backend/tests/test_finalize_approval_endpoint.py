@@ -502,3 +502,73 @@ def test_finalize_approval_credit_hour_used_when_credits_absent():
     assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits="3", credit_hour=4)) == 3
     assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits=3.0)) == 3
     assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A")) is None
+
+
+def _approval_payload():
+    return {
+        "document_id": "99999999-9999-9999-9999-999999999999",
+        "matric_number": "TEST-SE24-FINAL",
+        "academic_session": "2024/2025",
+        "semester": 1,
+        "courses": [{"course_code": "SECJ1013", "grade": "A", "credits": 3}],
+    }
+
+
+def _audit_mod():
+    return "app.v1.endpoints.audit" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit"
+
+
+def test_finalize_approval_status_write_failure_is_not_approved():
+    """If marking the document Approved fails, the endpoint must not report Approved."""
+    with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
+        mock_svc.get_university_course_catalog.return_value = {}
+        mock_svc.get_student_required_credits.return_value = 120
+        mock_svc.get_student_block_exempted_credits.return_value = (0, None)
+        mock_svc.persist_audit_results.return_value = "audit-1"
+        mock_svc.client.table.return_value.update.return_value.eq.return_value.execute.side_effect = RuntimeError("db down")
+        response = client.post("/api/v1/audit/finalize-approval", json=_approval_payload(), headers=AUTH_HEADERS)
+        assert response.status_code == 500
+        mock_svc.purge_uploaded_document_file.assert_not_called()
+
+
+def test_finalize_approval_purge_failure_still_approves():
+    with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
+        mock_svc.get_university_course_catalog.return_value = {}
+        mock_svc.get_student_required_credits.return_value = 120
+        mock_svc.get_student_block_exempted_credits.return_value = (0, None)
+        mock_svc.persist_audit_results.return_value = "audit-1"
+        mock_svc.purge_uploaded_document_file.return_value = {"success": False}
+        response = client.post("/api/v1/audit/finalize-approval", json=_approval_payload(), headers=AUTH_HEADERS)
+        assert response.status_code == 200
+        assert response.json()["processing_status"] == "Approved"
+        assert response.json()["storage_purged"] is False
+
+
+def _purge_svc(file_path, deleted):
+    try:
+        from app.core.supabase_client import SupabaseService
+    except ImportError:
+        from backend.app.core.supabase_client import SupabaseService
+    svc = SupabaseService.__new__(SupabaseService)
+    svc.client = MagicMock()
+    svc._ensure_ready = lambda: None
+    svc.client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"id": "d1", "processing_status": "Approved", "file_path": file_path}
+    ]
+    svc.delete_file_from_storage = MagicMock(return_value=deleted)
+    return svc
+
+
+def test_purge_keeps_file_path_when_storage_delete_fails():
+    svc = _purge_svc("slips/A1_1.pdf", deleted=False)
+    res = svc.purge_uploaded_document_file(document_id="d1")
+    assert res["success"] is False
+    svc.delete_file_from_storage.assert_called_once_with(bucket_name="academic-slips", file_path="slips/A1_1.pdf")
+    svc.client.table.return_value.update.assert_not_called()
+
+
+def test_purge_marks_purged_only_after_delete():
+    svc = _purge_svc("slips/A1_1.pdf", deleted=True)
+    res = svc.purge_uploaded_document_file(document_id="d1")
+    assert res["success"] is True
+    svc.client.table.return_value.update.assert_called_once_with({"file_path": "[PURGED]"})

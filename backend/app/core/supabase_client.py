@@ -260,12 +260,9 @@ class SupabaseService:
             return {"matric_no": clean_matric, "name": student_name}
 
         # Check existing student by matric_no
-        try:
-            res = self.client.table("students").select("*").eq("matric_no", clean_matric).execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0]
-        except Exception as sel_err:
-            print(f"[get_or_create_student] Student select error: {sel_err}")
+        res = self.client.table("students").select("*").eq("matric_no", clean_matric).execute()
+        if res.data:
+            return res.data[0]
 
         # Insert new student record matching live schema
         new_student = {
@@ -276,12 +273,8 @@ class SupabaseService:
             "syllabus_type": curriculum_year,
             "academic_status": "Good Standing"
         }
-        try:
-            ins_res = self.client.table("students").insert(new_student).execute()
-            return ins_res.data[0] if ins_res.data else new_student
-        except Exception as ins_err:
-            print(f"[get_or_create_student] Student insert warning: {ins_err}")
-            return new_student
+        ins_res = self.client.table("students").insert(new_student).execute()
+        return ins_res.data[0] if ins_res.data else new_student
 
     def get_student_block_exempted_credits(
         self,
@@ -375,10 +368,7 @@ class SupabaseService:
                 "academic_status": "Good Standing" if summary.overall_traffic_light != "RED" else "At-Risk",
                 "audit_status": "Approved"
             }
-            try:
-                self.client.table("students").update(update_data).eq("matric_no", target_matric).execute()
-            except Exception as upd_err:
-                print(f"[persist_audit_results] Update student warning: {upd_err}")
+            self.client.table("students").update(update_data).eq("matric_no", target_matric).execute()
 
             # 4. Insert degree_audits snapshot
             audit_record = {
@@ -393,14 +383,10 @@ class SupabaseService:
                 "audit_summary": summary.model_dump(),
                 "storage_pdf_path": storage_pdf_path
             }
-            try:
-                audit_res = self.client.table("degree_audits").insert(audit_record).execute()
-                if audit_res and audit_res.data and len(audit_res.data) > 0:
-                    return audit_res.data[0]["id"]
-            except Exception as audit_ins_err:
-                print(f"[persist_audit_results] degree_audits insert warning: {audit_ins_err}")
-
-            return "saved-audit"
+            audit_res = self.client.table("degree_audits").insert(audit_record).execute()
+            if not audit_res or not audit_res.data:
+                raise RuntimeError("degree_audits insert returned no row")
+            return audit_res.data[0]["id"]
         except Exception as e:
             print(f"[Supabase Persistence Warning] {e}")
             raise e
@@ -418,8 +404,8 @@ class SupabaseService:
         1. Target document MUST have processing_status == 'Approved' (advisor verified).
         2. If status is 'Pending_Student_Verification', 'Pending_Advisor_Approval', or 'Rejected',
            the purge request is aborted to protect audit review capabilities.
-        3. Deletes file from storage bucket ('academic-slips' or 'transcripts').
-        4. Updates uploaded_documents row: sets file_path = NULL (preserves row id, foreign keys, extracted data).
+        3. Deletes file from the 'academic-slips' bucket.
+        4. Only if the delete succeeded: sets file_path = '[PURGED]' (preserves row id, foreign keys, extracted data).
         5. Inserts an immutable entry into system_audit_logs with action_type 'DELETE'.
         
         Note: Automatic purge-on-approval is the intended production behavior for Phase 2.
@@ -462,22 +448,18 @@ class SupabaseService:
                 "processing_status": current_status
             }
 
-        # 4. Delete file from Supabase Storage
-        clean_path = file_path.removeprefix("transcripts/").removeprefix("academic-slips/").removeprefix("/")
-        bucket = "academic-slips"  # the only slip bucket
-
-        storage_deleted = False
-        try:
-            self.client.storage.from_(bucket).remove([clean_path])
-            storage_deleted = True
-        except Exception as e:
-            # Fallback to alternative bucket
-            fallback_bucket = "transcripts" if bucket == "academic-slips" else "academic-slips"
-            try:
-                self.client.storage.from_(fallback_bucket).remove([clean_path])
-                storage_deleted = True
-            except Exception as e2:
-                print(f"[Storage Delete Warning] Could not remove '{clean_path}' from buckets: {e2}")
+        # 4. Delete file from Supabase Storage; keep file_path on failure so the file can still be found (PDPA)
+        storage_deleted = self.delete_file_from_storage(bucket_name="academic-slips", file_path=file_path)
+        if not storage_deleted:
+            print(f"[Auto-Purge ERROR] Document '{doc_id}': '{file_path}' not deleted from storage; file_path kept.")
+            return {
+                "success": False,
+                "message": f"Storage delete failed for document '{doc_id}'; file_path kept.",
+                "document_id": doc_id,
+                "purged_file_path": None,
+                "storage_deleted": False,
+                "processing_status": current_status
+            }
 
         # 5. Update database row: mark file_path as [PURGED] (preserves NOT NULL constraint & foreign keys)
         self.client.table("uploaded_documents").update({

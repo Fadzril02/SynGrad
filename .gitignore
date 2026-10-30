@@ -54,3 +54,5 @@ temp_*
 # System Files
 .DS_Store
 Thumbs.db
+# Local Claude scratch output
+Claude outputs/

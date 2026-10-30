@@ -12,7 +12,7 @@ JWKS endpoint:
     https://gexcsnwztzajoupgjhpc.supabase.co/auth/v1/.well-known/jwks.json
 
 The dependency `verify_advisor_jwt` is applied to every mutating endpoint
-in audit.py (finalize-approval, extract, submit-verification, reject-document, purge-document).
+in audit.py (finalize-approval, extract, submit-verification, reject-document).
 It both verifies the token's ES256 signature AND cross-references the JWT's
 identity (email) against the advisor_id claimed in the request body.
 """

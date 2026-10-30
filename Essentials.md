@@ -169,13 +169,13 @@ backend/tests/ pytest; conftest stubs _load_authorized_document unless marked re
 
 src/
   app/routes.tsx, app/App.tsx
-  app/pages/landing/*        landing sections (FoundingAdvisorCallout.tsx is unused)
+  app/pages/landing/*        landing sections
   app/pages/student/*        StudentPortal (upload + verify), StudentUploadSlip, DegreeAuditView,
                              AcademicHistoryView, AdvisingNotesView, CgpaCalculatorView, StudentDashboardView
   app/pages/advisor/*        AdvisorPortal/Layout, AdvisorDashboard, CorrectionsQueue, StudentsList, StudentView,
                              CurriculumTemplatesView
   app/pages/lab/SlipLab.tsx  slip extraction lab
-  pages/auth/*               StudentAuth, AdvisorLogin, CompleteRegistration
+  pages/auth/*               CompleteRegistration
   context/AuthContext.tsx    profile fetch deferred with setTimeout inside onAuthStateChange
   lib/api.ts                 backend client (Bearer token); lib/gradeScale.ts; lib/tenants.ts; lib/supabase.ts; lib/semester.ts
 
