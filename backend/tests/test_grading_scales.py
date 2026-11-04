@@ -332,6 +332,7 @@ def _mock_supabase_for_exemptions(
             eq2 = MagicMock()
             eq1.eq.return_value = eq2
             eq2.execute.return_value = MagicMock(data=[])
+            eq2.in_.return_value.execute.return_value = MagicMock(data=[])
             tbl.upsert.return_value.execute.return_value = MagicMock(data=[{}])
             tbl.delete.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
 

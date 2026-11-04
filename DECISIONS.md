@@ -86,6 +86,8 @@ Status: **Live** (in production) · **Dev** (on dev, not merged) · **Agreed** (
 - Why: the old check read `degree_template_courses` and `cohorts.cohort_id` (neither exists) and swallowed the error, so any course could be exempted; the credit read hid DB errors as "no override", which silently used the template total.
 - Update (2026-11-04): only `add` is checked against the template; `remove` is always allowed so stale or wrong exemptions can be cleaned up. Every item (action, EX/CT grade, credits, template for adds) is validated before any write. An `exemption_audit` insert failure now raises instead of being printed and ignored. The student is looked up inside the advisor's tenant (`tenant_id` + `matric_no`), so another tenant's student returns 404 (was 403 "cross-tenant").
 - Why: the template check blocked removing exemptions saved while the old check was broken; a bad later item could fail after earlier items were written; a silent audit failure left changes with no trail.
+- Update (2026-11-04): remove only selects/deletes rows with grade EX or CT; a real grade for the course is never deleted by this endpoint. Add is rejected (400 "Course X already has a grade; exemption not needed") when the student already has a non-EX/CT grade for that course; checked with the other validation, before any write. Tenant IDs are compared exactly: every `tenant_id` is a foreign key to `tenants.id` and the JWT `app_metadata.tenant_id` is copied from that DB value at registration, so no case normalization is needed.
+- Why: remove deleted every row for the course code, including passed/failed attempts (breaks "data is cumulative"); an exemption next to a real grade counted the credits twice.
 
 ## Product scope & order
 

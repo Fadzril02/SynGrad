@@ -10,17 +10,18 @@ except ImportError:
     from backend.app.v1.endpoints import students
 
 
-def _svc(catalog, audit_error=None):
+def _svc(catalog, audit_error=None, records=()):
     rows = {
         "students": [{"matric_no": "A1", "tenant_id": "UTM", "advisor_staff_id": "S1", "cohort_id": "c1"}],
         "advisors": [{"staff_id": "S1", "tenant_id": "UTM"}],
+        "academic_records": list(records),
     }
     client = MagicMock()
     client.queries = []
 
     def table(name):
         q = MagicMock()
-        for m in ("select", "eq", "limit", "upsert", "delete", "update", "insert"):
+        for m in ("select", "eq", "in_", "limit", "upsert", "delete", "update", "insert"):
             getattr(q, m).return_value = q
         q.execute.return_value = MagicMock(data=rows.get(name, []))
         if name == "exemption_audit" and audit_error:
@@ -100,3 +101,19 @@ def test_student_lookup_scoped_to_advisor_tenant():
     _patch(svc, "SECJ1013")
     student_q = next(q for n, q in svc.client.queries if n == "students")
     student_q.eq.assert_any_call("tenant_id", "UTM")
+
+
+def test_remove_only_deletes_exemption_rows():
+    svc = _svc({}, records=[{"id": "r1", "grade": "A"}])
+    _patch(svc, "SECJ1013", action="remove")
+    delete_q = next(q for n, q in svc.client.queries if n == "academic_records" and q.delete.called)
+    delete_q.in_.assert_called_once_with("grade", ["EX", "CT"])
+
+
+def test_add_rejected_when_course_already_has_real_grade():
+    svc = _svc({"SECJ1013": {"code": "SECJ1013"}}, records=[{"course_code": "SECJ1013", "grade": "A"}])
+    with pytest.raises(HTTPException) as e:
+        _patch(svc, "SECJ1013")
+    assert e.value.status_code == 400
+    assert e.value.detail == "Course SECJ1013 already has a grade; exemption not needed"
+    assert _writes(svc) == []

@@ -14,6 +14,7 @@ except ImportError:
     from backend.app.core.supabase_client import SupabaseService
 
 router = APIRouter(prefix="/students", tags=["Students"])
+EXEMPTION_GRADES = ("EX", "CT")
 
 
 class CourseExemptionAction(BaseModel):
@@ -119,7 +120,7 @@ async def patch_student_exemptions(
         clean_code = ca.course_code.replace(" ", "").upper()
         action_type = ca.action.strip().lower()
         grade_val = ca.grade.strip().upper()
-        if grade_val not in {"EX", "CT"}:
+        if grade_val not in EXEMPTION_GRADES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid exemption grade '{grade_val}'. Only 'EX' (exemption) and 'CT' (credit transfer) are allowed."
@@ -137,6 +138,7 @@ async def patch_student_exemptions(
         actions.append((ca, clean_code, action_type, grade_val))
 
     add_codes = [code for _, code, action_type, _ in actions if action_type == "add"]
+    old_exempt_grades = {}
     if add_codes:
         catalog = svc.get_template_course_catalog(clean_matric, student_tenant)  # DB errors raise
         if catalog is None:
@@ -150,6 +152,15 @@ async def patch_student_exemptions(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Course {code} is not in this student's degree template"
                 )
+        # A real grade already counts the credits; an exemption on top would count them twice.
+        existing = svc.client.table("academic_records").select("course_code, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).in_("course_code", add_codes).execute()
+        for row in existing.data or []:
+            if (row.get("grade") or "").strip().upper() not in EXEMPTION_GRADES:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Course {row['course_code']} already has a grade; exemption not needed"
+                )
+        old_exempt_grades = {row["course_code"]: row.get("grade") for row in existing.data or []}
 
     audit_rows: List[dict] = []
     old_entry_sem = int(student.get("entry_semester") or 1)
@@ -187,48 +198,46 @@ async def patch_student_exemptions(
             })
 
     # Process EX / CT course records
-    if actions:
-        for ca, clean_code, action_type, grade_val in actions:
-            if action_type == "add":
-                # Check for existing record
-                existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
-                old_grade = existing_res.data[0].get("grade") if existing_res.data else None
+    for ca, clean_code, action_type, grade_val in actions:
+        if action_type == "add":
+            old_grade = old_exempt_grades.get(clean_code)
 
-                svc.client.table("academic_records").upsert({
-                    "tenant_id": student_tenant,
-                    "matric_no": clean_matric,
-                    "course_code": clean_code,
-                    "course_name": ca.course_name or clean_code,
-                    "credits": ca.credits,
-                    "grade": grade_val,
-                    "grade_point": 0.00,
-                    "status": "Exempted",
-                    "semester": ca.semester or f"Sem {request.entry_semester or old_entry_sem}"
-                }).execute()
+            svc.client.table("academic_records").upsert({
+                "tenant_id": student_tenant,
+                "matric_no": clean_matric,
+                "course_code": clean_code,
+                "course_name": ca.course_name or clean_code,
+                "credits": ca.credits,
+                "grade": grade_val,
+                "grade_point": 0.00,
+                "status": "Exempted",
+                "semester": ca.semester or f"Sem {request.entry_semester or old_entry_sem}"
+            }).execute()
 
-                audit_rows.append({
-                    "tenant_id": student_tenant,
-                    "matric_no": clean_matric,
-                    "changed_by_staff_id": advisor_staff_id,
-                    "field": f"course_exemption_add:{clean_code}",
-                    "old_value": str(old_grade) if old_grade else None,
-                    "new_value": grade_val
-                })
+            audit_rows.append({
+                "tenant_id": student_tenant,
+                "matric_no": clean_matric,
+                "changed_by_staff_id": advisor_staff_id,
+                "field": f"course_exemption_add:{clean_code}",
+                "old_value": str(old_grade) if old_grade else None,
+                "new_value": grade_val
+            })
 
-            else:  # "remove" (validated above)
-                existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
-                old_grade = existing_res.data[0].get("grade") if existing_res.data else None
+        else:  # "remove" (validated above)
+            # Only exemption rows; a real grade for the course is never deleted here
+            existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).in_("grade", list(EXEMPTION_GRADES)).execute()
+            old_grade = existing_res.data[0].get("grade") if existing_res.data else None
 
-                svc.client.table("academic_records").delete().eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
+            svc.client.table("academic_records").delete().eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).in_("grade", list(EXEMPTION_GRADES)).execute()
 
-                audit_rows.append({
-                    "tenant_id": student_tenant,
-                    "matric_no": clean_matric,
-                    "changed_by_staff_id": advisor_staff_id,
-                    "field": f"course_exemption_remove:{clean_code}",
-                    "old_value": str(old_grade) if old_grade else None,
-                    "new_value": None
-                })
+            audit_rows.append({
+                "tenant_id": student_tenant,
+                "matric_no": clean_matric,
+                "changed_by_staff_id": advisor_staff_id,
+                "field": f"course_exemption_remove:{clean_code}",
+                "old_value": str(old_grade) if old_grade else None,
+                "new_value": None
+            })
 
     # 5. Persist student updates
     if student_updates:
