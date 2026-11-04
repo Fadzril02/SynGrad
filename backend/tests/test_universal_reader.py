@@ -105,6 +105,36 @@ def test_guardrail_decimal_credits(sample_scale):
     assert any("Decimal credits (1.5)" in w for w in warnings)
 
 
+@pytest.mark.parametrize("grade,credits,ok", [
+    ("HL", 0, True),      # pass, not in CGPA
+    ("A", 0, False),      # graded course needs credits
+    ("Z", 0, False),      # unknown grade
+    ("HL", -1, False),
+    ("HL", None, False),
+    ("HL", "abc", False),
+])
+def test_guardrail_zero_credits_only_outside_cgpa(sample_scale, grade, credits, ok):
+    try:
+        from app.engine.slip_validation import validate_credits
+    except ImportError:
+        from backend.app.engine.slip_validation import validate_credits
+    assert (validate_credits(credits, "CS101", grade, sample_scale) is None) is ok
+
+
+def test_guardrail_zero_credit_pass_course_not_flagged(sample_scale):
+    slip_data = {
+        "semesters": [{
+            "semester_no": 1,
+            "session": "2024/2025",
+            "courses": [{"code": "CS101", "grade": "A", "credits": 3}, {"code": "UHAK1012", "grade": "HL", "credits": 0}],
+            "printed_gpa": 4.00,
+        }],
+        "matric_no": "A24CS0001",
+    }
+    warnings, _ = validate_slip(slip_data, sample_scale, expected_matric="A24CS0001")
+    assert not any("redit" in w for w in warnings)
+
+
 # ---------------------------------------------------------------------------
 # Endpoint & Decision Logic Tests
 # ---------------------------------------------------------------------------

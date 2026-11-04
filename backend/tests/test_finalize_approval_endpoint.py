@@ -498,10 +498,21 @@ def test_finalize_approval_credit_hour_used_when_credits_absent():
         from app.v1.endpoints.audit import _parse_credits
     except ImportError:
         from backend.app.v1.endpoints.audit import _parse_credits
-    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credit_hour=4)) == 4
-    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits="3", credit_hour=4)) == 3
-    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits=3.0)) == 3
-    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A")) is None
+    scale = sys.modules[_audit_mod()].load_scale("T")  # autouse fixture's patched scale
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credit_hour=4), scale) == 4
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits="3", credit_hour=4), scale) == 3
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A", credits=3.0), scale) == 3
+    assert _parse_credits(ExtractedCourseItem(course_code="X", grade="A"), scale) is None
+
+
+def test_parse_credits_zero_only_for_grades_outside_cgpa():
+    audit_mod = sys.modules[_audit_mod()]
+    scale = audit_mod.load_scale("T")
+    item = lambda grade, cr: ExtractedCourseItem(course_code="X", grade=grade, credits=cr)
+    assert audit_mod._parse_credits(item("HL", 0), scale) == 0   # pass, not in CGPA
+    assert audit_mod._parse_credits(item("A", 0), scale) is None  # graded
+    assert audit_mod._parse_credits(item("ZZ", 0), scale) is None  # unknown grade
+    assert audit_mod._parse_credits(item("HL", -1), scale) is None
 
 
 def _approval_payload():

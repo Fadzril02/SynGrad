@@ -65,10 +65,11 @@ Extraction Rules:
 1. Do not invent or hallucinate courses. Extract only records present on this page image. If no courses are found on this page, return an empty "semesters" list [].
 2. "semester_no" must be an integer (1 to 4).
 3. "session" must be the academic year format "YYYY/YYYY" (e.g. "2024/2025" or "2023/2024").
-4. "credits" must be a positive number.
+4. "credits" is the number printed on the slip (0 is valid, e.g. for PASS/non-graded courses).
 5. "printed_gpa" and "printed_cgpa" are the GPA and CGPA values explicitly printed on the slip for that semester (decimal number), or null if not printed.
 6. "matric_no" is the student matric/registration number if found, or null. NEVER output national ID (IC/NRIC/MyKad) or passport numbers anywhere; ignore them completely.
-7. Return raw JSON only with NO markdown fences, NO preamble, and NO extra keys.
+7. Rows at the top of this page that appear before any semester/session heading continue the last semester of the previous page{prev_session_context}. Put them under that semester with its "semester_no" and "session".
+8. Return raw JSON only with NO markdown fences, NO preamble, and NO extra keys.
 """
 
 
@@ -124,9 +125,11 @@ def render_pdf_to_images(pdf_bytes: bytes) -> List[bytes]:
 def extract_page_with_vision(
     png_bytes: bytes,
     tenant_ctx: Optional[Dict[str, Any]] = None,
+    prev_session: Optional[Tuple[Optional[int], str]] = None,
 ) -> Dict[str, Any]:
     """
     Calls vision-capable model through OpenAI-compatible client for a single page image.
+    prev_session = (semester_no, session) of the previous page's last semester, for headless top rows.
     Timeout + 1 retry per call.
     """
     if not settings.LLM_VISION_MODEL:
@@ -145,7 +148,13 @@ def extract_page_with_vision(
         else "Standard letter grades (A-F, plus/minus, pass/fail codes)"
     )
 
-    system_prompt = VISION_SYSTEM_PROMPT.format(valid_grades_context=valid_grades_context)
+    prev_session_context = (
+        f' (semester_no {prev_session[0]}, session "{prev_session[1]}")' if prev_session else ""
+    )
+    system_prompt = VISION_SYSTEM_PROMPT.format(
+        valid_grades_context=valid_grades_context,
+        prev_session_context=prev_session_context,
+    )
     b64_image = base64.b64encode(png_bytes).decode("utf-8")
 
     from openai import OpenAI
@@ -214,12 +223,12 @@ def extract_page_with_vision(
             continue
 
         raw_sem_no = sem.get("semester_no")
-        sem_no = 1
+        sem_no = None  # missing stays None: headless rows are carried over or flagged by validate_slip
         if raw_sem_no is not None:
             try:
                 sem_no = int(raw_sem_no)
             except (ValueError, TypeError):
-                sem_no = 1
+                sem_no = None
 
         session = str(sem.get("session") or "").strip()
         session = re.sub(r"(\d{4})[-\s](\d{4})", r"\1/\2", session)
@@ -231,13 +240,14 @@ def extract_page_with_vision(
                 continue
             code = str(c.get("code") or c.get("course_code") or "").strip().upper()
             name = str(c.get("name") or c.get("course_name") or code).strip()
-            raw_creds = c.get("credits") or c.get("credit_hour") or 3
+            # 0 is valid (PASS courses); missing/garbage pass through for validate_slip to flag
+            creds = c.get("credits") if c.get("credits") is not None else c.get("credit_hour")
             try:
-                creds = float(raw_creds)
-                if creds.is_integer():
-                    creds = int(creds)
+                f_creds = float(creds)
+                if f_creds.is_integer():
+                    creds = int(f_creds)
             except (ValueError, TypeError):
-                creds = 3
+                pass
 
             grade = str(c.get("grade") or "").strip().upper()
 
@@ -312,7 +322,8 @@ def extract_scanned_transcript(
     page_warnings: List[str] = []
 
     for page_idx, png_bytes in enumerate(pages, start=1):
-        page_res = extract_page_with_vision(png_bytes, tenant_ctx)
+        prev_key = (merged_semesters[-1]["semester_no"], merged_semesters[-1]["session"]) if merged_semesters else None
+        page_res = extract_page_with_vision(png_bytes, tenant_ctx, prev_key)
         p_semesters = page_res.get("semesters", [])
         total_page_courses = sum(len(s.get("courses", [])) for s in p_semesters)
 
@@ -324,8 +335,11 @@ def extract_scanned_transcript(
             if not looks_like_national_id(candidate_matric):
                 detected_matric_no = candidate_matric
 
-        for s in p_semesters:
-            sem_key = (s.get("semester_no", 1), s.get("session", ""))
+        for i, s in enumerate(p_semesters):
+            sem_key = (s.get("semester_no"), s.get("session") or "")
+            # Headless rows at the top of a page continue the previous page's last session
+            if i == 0 and prev_key and (sem_key[0] is None or not sem_key[1]):
+                sem_key = prev_key
             if sem_key not in semester_map:
                 new_sem = {
                     "semester_no": sem_key[0],

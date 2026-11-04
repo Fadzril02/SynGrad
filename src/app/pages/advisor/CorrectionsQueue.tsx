@@ -8,6 +8,7 @@ import {
   fetchGradeScale,
   gradesForDropdown,
   isPass,
+  findGradeDefinition,
   GradeScaleRow,
 } from "../../../lib/gradeScale";
 
@@ -95,8 +96,14 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
       return;
     }
     const credits = Number(manualCredits);
-    if (!manualCredits.trim() || !Number.isFinite(credits) || credits <= 0) {
+    if (!manualCredits.trim() || !Number.isFinite(credits) || credits < 0) {
       setCreditsError("Credits are required.");
+      return;
+    }
+    // 0 credits only for a grade that does not count in CGPA (e.g. PASS); server re-checks
+    const defn = findGradeDefinition(manualGrade, gradeScale);
+    if (credits === 0 && (!defn || defn.counts_in_cgpa)) {
+      setCreditsError("0 credits is only allowed for grades that do not count in CGPA.");
       return;
     }
     const newCourse = {
@@ -456,7 +463,7 @@ export function CorrectionsQueue({ queue, roster, onApproved, onRefresh }: Corre
                           <label className="text-[11px] font-medium text-gray-600 block mb-1">Credits *</label>
                           <input
                             type="number"
-                            min="1"
+                            min="0"
                             max="12"
                             value={manualCredits}
                             onChange={(e) => { setManualCredits(e.target.value); setCreditsError(""); }}

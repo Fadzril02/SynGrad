@@ -289,3 +289,47 @@ def test_scanned_pdf_ic_removed_from_output(monkeypatch):
         assert valid_course["code"] == "CS101"
         assert "020512-01-1234" not in valid_course["name"]
         assert "[REDACTED-ID]" in valid_course["name"]
+
+
+def test_scanned_headless_top_rows_join_previous_page_last_session(monkeypatch):
+    """Rows before any session heading on page 2 belong to page 1's last session; page 2 is told which one."""
+    monkeypatch.setattr(settings, "LLM_VISION_MODEL", "llama-3.2-11b-vision-preview")
+    monkeypatch.setattr(settings, "LLM_API_KEY", "mock-key")
+
+    page1 = {"semesters": [
+        {"semester_no": 1, "session": "2023/2024", "courses": [{"code": "CS101", "credits": 3, "grade": "A"}]},
+        {"semester_no": 2, "session": "2023/2024", "courses": [{"code": "CS102", "credits": 3, "grade": "A"}]},
+    ], "matric_no": "A24MJ5050"}
+    page2 = {"semesters": [
+        {"semester_no": None, "session": "", "courses": [{"code": "UHAK1012", "credits": 0, "grade": "HL"}]},
+        {"semester_no": 1, "session": "2024/2025", "courses": [{"code": "CS201", "credits": 3, "grade": "B"}]},
+    ], "matric_no": None}
+
+    with patch.object(scanned_reader, "render_pdf_to_images", return_value=[b"p1", b"p2"]),          patch.object(scanned_reader, "extract_page_with_vision", side_effect=[page1, page2]) as mock_page:
+        result = scanned_reader.extract_scanned_transcript(b"mock-pdf", tenant_ctx={})
+
+    assert mock_page.call_args_list[0].args[2] is None
+    assert mock_page.call_args_list[1].args[2] == (2, "2023/2024")
+    by_key = {(s["semester_no"], s["session"]): [c["code"] for c in s["courses"]] for s in result["semesters"]}
+    assert by_key == {
+        (1, "2023/2024"): ["CS101"],
+        (2, "2023/2024"): ["CS102", "UHAK1012"],
+        (1, "2024/2025"): ["CS201"],
+    }
+    assert result["semesters"][1]["courses"][1]["credits"] == 0
+
+
+def test_vision_prompt_names_previous_session_and_keeps_zero_credits(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_VISION_MODEL", "vision-model")
+    monkeypatch.setattr(settings, "LLM_API_KEY", "mock-key")
+    fake_resp = MagicMock()
+    fake_resp.choices[0].message.content = (
+        '{"semesters":[{"semester_no":2,"session":"2023/2024","courses":'
+        '[{"code":"UHAK1012","name":"Co-cu","credits":0,"grade":"HL"}]}],"matric_no":null}'
+    )
+    with patch("openai.OpenAI") as mock_openai:
+        mock_openai.return_value.chat.completions.create.return_value = fake_resp
+        out = scanned_reader.extract_page_with_vision(b"png", {}, (2, "2023/2024"))
+        prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+    assert 'semester_no 2, session "2023/2024"' in prompt
+    assert out["semesters"][0]["courses"][0]["credits"] == 0

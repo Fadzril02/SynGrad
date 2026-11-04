@@ -26,11 +26,26 @@ def validate_course_code(code: str) -> Optional[str]:
     return None
 
 
-def validate_credits(credits_val: Any, course_code: str = "") -> Optional[str]:
+def zero_credits_allowed(grade: Any, scale: Optional[GradingScale], course_code: str = "") -> bool:
+    """0 credits is valid only for a known grade that does not count in CGPA (e.g. PASS)."""
+    if scale is None:
+        return False
+    try:
+        return not scale.counts_in_cgpa(str(grade or "").strip().upper(), course_code)
+    except ValueError:
+        return False
+
+
+def validate_credits(
+    credits_val: Any,
+    course_code: str = "",
+    grade: Any = None,
+    scale: Optional[GradingScale] = None,
+) -> Optional[str]:
     """
     Validates credit hours.
     Allows decimals in validation; if not whole, flags warning "decimal credits not supported yet".
-    If credits <= 0, flags warning.
+    Negative credits, or 0 for a grade that counts in CGPA, flag a warning.
     """
     if credits_val is None:
         return f"Missing credits for course '{course_code}'" if course_code else "Missing credits"
@@ -39,7 +54,7 @@ def validate_credits(credits_val: Any, course_code: str = "") -> Optional[str]:
     except (ValueError, TypeError):
         return f"Invalid credits value '{credits_val}' for course '{course_code}'"
 
-    if val <= 0:
+    if val < 0 or (val == 0 and not zero_credits_allowed(grade, scale, course_code)):
         return f"Credits must be greater than 0 (got {credits_val}) for course '{course_code}'"
 
     if not val.is_integer():
@@ -117,7 +132,7 @@ def validate_slip(
     Pure guardrail validation applied to BOTH rule and AI outputs.
     Checks:
     - grade must exist in tenant grade scale
-    - credits > 0 (decimals flagged as not supported yet)
+    - credits > 0, or 0 for grades outside CGPA (decimals flagged as not supported yet)
     - course code format sane
     - semester/session normalisable via normalize_semester
     - recomputed GPA vs printed GPA (0.01 tolerance)
@@ -171,7 +186,7 @@ def validate_slip(
                 continue
             code = str(c.get("code") or c.get("course_code") or "").strip()
             grade = str(c.get("grade") or "").strip()
-            creds = c.get("credits") or c.get("credit_hour")
+            creds = c["credits"] if c.get("credits") is not None else c.get("credit_hour")
 
             # Check course code
             c_code_warn = validate_course_code(code)
@@ -179,7 +194,7 @@ def validate_slip(
                 warnings.append(c_code_warn)
 
             # Check credits
-            cr_warn = validate_credits(creds, code)
+            cr_warn = validate_credits(creds, code, grade, scale)
             if cr_warn and cr_warn not in warnings:
                 warnings.append(cr_warn)
 

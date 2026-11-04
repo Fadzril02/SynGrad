@@ -40,7 +40,7 @@ try:
     from app.engine.graph_resolver import PrerequisiteGraphResolver
     from app.engine.universal_reader import extract_with_llm, looks_like_national_id, redact_personal_ids
     from app.engine.scanned_reader import extract_scanned_transcript
-    from app.engine.slip_validation import validate_slip
+    from app.engine.slip_validation import validate_slip, zero_credits_allowed
     from app.engine.progress import compute_progress
     from app.core.config import settings
     from app.core.supabase_client import SupabaseService
@@ -68,7 +68,7 @@ except ImportError:
     from backend.app.engine.graph_resolver import PrerequisiteGraphResolver
     from backend.app.engine.universal_reader import extract_with_llm, looks_like_national_id, redact_personal_ids
     from backend.app.engine.scanned_reader import extract_scanned_transcript
-    from backend.app.engine.slip_validation import validate_slip
+    from backend.app.engine.slip_validation import validate_slip, zero_credits_allowed
     from backend.app.engine.progress import compute_progress
     from backend.app.core.config import settings
     from backend.app.core.supabase_client import SupabaseService
@@ -790,8 +790,8 @@ async def _extract_core(request: ExtractPDFRequest, jwt_payload: dict, doc: dict
     return ExtractPDFResponse(success=True, data=extracted_data)
 
 
-def _parse_credits(course: Any) -> Optional[int]:
-    """Whole, positive credits from `credits` (else `credit_hour`); None if missing or invalid."""
+def _parse_credits(course: Any, scale: GradingScale) -> Optional[int]:
+    """Whole credits from `credits` (else `credit_hour`); 0 only for grades outside CGPA; None if missing or invalid."""
     raw = course.credits if course.credits is not None else course.credit_hour
     if raw is None or isinstance(raw, bool):
         return None
@@ -799,7 +799,9 @@ def _parse_credits(course: Any) -> Optional[int]:
         val = float(raw)
     except (TypeError, ValueError):
         return None
-    if val <= 0 or not val.is_integer():
+    if val < 0 or not val.is_integer():
+        return None
+    if val == 0 and not zero_credits_allowed(course.grade, scale, course.course_code):
         return None
     return int(val)
 
@@ -858,17 +860,17 @@ async def finalize_approval(
             detail="Missing required semester or academic_session. Both must be explicitly specified."
         )
 
-    # Every course needs whole, positive credits; reject the whole approval (nothing saved) otherwise
-    bad_credit_codes = [c.course_code for c in request.courses if _parse_credits(c) is None]
-    if bad_credit_codes:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Credits missing for: {', '.join(bad_credit_codes)} — please fix and resubmit",
-        )
-
     # 1. Transform Staged Courses into ParsedLineItem objects using Tenant Grading Scale
     try:
         scale = load_scale(tenant_id, client=supabase_svc.client)
+
+        # Every course needs whole credits (> 0, or 0 for grades outside CGPA); reject the whole approval (nothing saved) otherwise
+        bad_credit_codes = [c.course_code for c in request.courses if _parse_credits(c, scale) is None]
+        if bad_credit_codes:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Credits missing for: {', '.join(bad_credit_codes)} — please fix and resubmit",
+            )
 
         raw_current_sem = f"Sem {request.semester} {request.academic_session}".strip()
         current_semester = normalize_semester(raw_current_sem)
@@ -877,7 +879,7 @@ async def finalize_approval(
         for c in request.courses:
             code = c.course_code.replace(" ", "").upper()
             grade = c.grade.strip().upper()
-            credits_val = _parse_credits(c)
+            credits_val = _parse_credits(c, scale)
             gp = scale.grade_points(grade, code)
             is_p = scale.is_pass(grade, code)
             in_cgpa = scale.counts_in_cgpa(grade, code)
