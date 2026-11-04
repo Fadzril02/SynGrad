@@ -79,7 +79,7 @@ Status: **Live** (in production) · **Dev** (on dev, not merged) · **Agreed** (
 - Why: public launch without waiting for lecturer UAT.
 - Order: finish & merge dev → Privacy Policy/Terms/consent → accounts & emails (#1–#4) → single-player v1 → cohort join → payments → planner.
 
-**#19 Single-player v1 scope** · Proposed · 2026-11-04
+**#19 Single-player v1 scope** · Replaced by #22 · 2026-11-04
 - In: any-email signup; pick Institution → Programme → Intake from a hand-seeded list; "not listed" request form; slips or one transcript; audit + CGPA; student self-confirms.
 - Out (later): handbook extraction, crowd verification, equivalences, planner.
 
@@ -91,3 +91,37 @@ Status: **Live** (in production) · **Dev** (on dev, not merged) · **Agreed** (
 
 **#21 Staging first, then production** · Live
 - Decision: all work on `dev` → staging → merge to `main`; migrations staging first.
+
+**#22 v1 launch: UTM + UniKL, exam slips only, fixed time box** · Agreed (institutions) · Proposed (date) · 2026-11-04
+- Decision: first public launch targets **UTM and UniKL students only**, exam slips only (no transcript import), degree audit + CGPA; "slips-only mode" (CGPA + history, no audit) for programmes not yet seeded; "not listed" → founder queue. Advisors still join via invite code (founder approves). Target launch 20 Dec 2026 (6-week box; cut scope, not the date) — date to confirm against exam calendar.
+- Reading: UTM text slips → rules; UniKL text slips → AI text reader (tested OK in /lab). Scans → best effort, "Needs review" if AI fails.
+- Needed for UniKL: production tenant row, real UniKL grading scale (from a slip/handbook grading key), student email domain, 1–2 seeded programmes, a few UniKL testers.
+- Deferred until after first-semester review: transcript import, other institutions, staff-email advisor signup, shared course library/crowd verification, payments in code, planner.
+- Why: the plan had no deadline and kept growing; two campuses with text slips keep AI cost and work small. Detail: project doc "Finishable SynGrad launch plan".
+
+---
+
+## Premortem 2026-11-04 (plan stress test)
+
+Imagined failure: "6 months after public launch, SynGrad is down, gave wrong audits, or caused a privacy complaint." Causes, worst first.
+**Blocks launch** = high probability × high impact; must be solved before public launch. Others are accepted risks with a mitigation.
+
+| # | Cause | Area | Prob | Impact | Mitigation | Status |
+|---|---|---|---|---|---|---|
+| P1 | Free AI quota runs out on launch day (Groq free tier is roughly 200K tokens/day; a scanned transcript can use thousands) → uploads fail for everyone | Platform / free tier | High | High | Per-user upload limit (e.g. 5/day), file-hash cache, clear "busy, try later" message; move Groq to pay-as-you-go before launch | **Blocks launch** |
+| P2 | Single-player students may have no matric, but records, RLS helpers and uniqueness are keyed by `(tenant_id, matric_no)` | Data model | High | High | Decide before building: key records by `student_id` (uuid), or require matric in v1 (read from the first slip, user confirms) | **Blocks launch** |
+| P3 | Transcript + slip overlap is not detected because institutions name semesters differently ("SESSION 1 2021/2022", "SEM 1 2025/2026", "SEPT–JAN 2021 Semester 1") → courses double-counted, wrong CGPA | Data / overlap | High | High | One canonical semester key per institution; detect duplicates by course code + session; newer document wins with a visible warning; tests with the real samples | **Blocks launch** |
+| P4 | PDPA: no account/data deletion, no retention policy, cross-border AI processing (Groq, US) not disclosed. "Data is never overwritten" conflicts with the right to delete | PDPA / Security | Medium | High | Privacy Policy + Terms + consent; "delete my account" that really deletes; define rule: cumulative while the account is active, full delete on request; disclose AI processing and that scans include IC | **Blocks launch** |
+| P5 | Groq retires a model again (3 times so far) → reader fails, nobody notices | Operations | High | High | Free error alerts (email via Resend or Sentry free) on 5xx; tiny daily "model alive" check in /health; models stay in env vars; check Groq deprecations page monthly | **Blocks launch** (cheap) |
+| P6 | Programme not in the hand-seeded list → most public visitors get no audit and leave | Business / Function | High | High | Launch to UTM students first; "slips-only mode" (CGPA + history without audit) for unlisted programmes; bring personal CSV/handbook upload forward | **Blocks launch** |
+| P7 | Institution uses one domain for staff AND students (or alumni) → a student auto-approved as advisor creates a fake cohort and collects classmates' records | Security | Medium | High | Staff-domain list is staff-only and explicit; shared-domain institutions → manual approval; show "verified advisor at X" on the join screen | Must mitigate |
+| P8 | Self-confirmed single-player grades enter an advisor cohort looking like advisor-approved data | Data / trust | High | Medium | Every record carries `verified_by` (self / advisor); advisor sees badges and re-approves on join | Must mitigate |
+| P9 | Cohort code leaks (WhatsApp) → strangers join a lecturer's cohort | Security | Medium | Medium | Advisor approves join requests (or cohort cap) + matric/institution check; rate-limit code attempts | Accepted, mitigate in cohort-join phase |
+| P10 | AI vision misreads a row and no printed GPA exists to catch it; student confirms without looking | Function | Medium | Medium | Force row-by-row review for `ai_scan`; later show the cropped image next to each row | Accepted |
+| P11 | Student picks the wrong intake/programme (codes renamed, e.g. SECJ → SCSE) → wrong audit | Function | Medium | Medium | Infer intake from matric (UTM A24 → 2024) and first slip; "is this your programme?" confirm | Accepted |
+| P12 | Resend free email limit (100/day) hit by signup + verification emails during a launch spike | Platform | Medium | Medium | Watch usage; upgrade or batch only when needed | Accepted |
+| P13 | Students won't pay; university portals "good enough" | Business | High | High | Test willingness to pay early (cheap semester pass); measure semester-to-semester return rate | Accepted (business risk, not a code fix) |
+
+Contradictions found and resolved:
+- "Free tiers only" vs paid Render (#20) and P1 Groq pay-as-you-go → exceptions are logged here.
+- "Data cumulative, never overwritten" vs PDPA deletion → cumulative while the account is active; real deletion on request.
