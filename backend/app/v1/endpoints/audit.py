@@ -916,29 +916,26 @@ async def finalize_approval(
             ))
 
         # 2. Course catalogue + prerequisites from the student's degree template
-        catalog = supabase_svc.get_template_course_catalog(
-            matric_no=matric_number, cohort_id=getattr(request, "cohort_id", None)
-        )
+        catalog = supabase_svc.get_template_course_catalog(matric_no=matric_number, tenant_id=tenant_id)
         no_template_warning = None
         if catalog is None:
             catalog = {}
             no_template_warning = "No degree template assigned to this student; prerequisites not checked."
 
-        # 3. Required credits: student's own override, else the degree template's total
-        total_required_credits = supabase_svc.get_student_required_credits(
-            matric_no=matric_number, cohort_id=getattr(request, "cohort_id", None)
+        # 3. Block exemptions + the student's own graduation override; the template total only when no override
+        block_exempted_credits, student_grad_req = supabase_svc.get_student_block_exempted_credits(
+            matric_no=matric_number, tenant_id=tenant_id
         )
         no_credits_warning = None
-
-        # 3a. Fetch block_exempted_credits and graduation_credit_requirement from students table.
-        block_exempted_credits, student_grad_req = supabase_svc.get_student_block_exempted_credits(
-            matric_no=matric_number
-        )
         if student_grad_req is not None:
             total_required_credits = student_grad_req
-        elif total_required_credits is None:
-            total_required_credits = 0
-            no_credits_warning = "No degree template credit total for this student; credits remaining not computed."
+        else:
+            total_required_credits = supabase_svc.get_student_required_credits(
+                matric_no=matric_number, tenant_id=tenant_id
+            )
+            if total_required_credits is None:
+                total_required_credits = 0
+                no_credits_warning = "No degree template credit total for this student; credits remaining not computed."
 
         # 3b. SECURE MULTI-TENANCY (Prevent IDOR):
         # Historical records scoped to verified tenant_id derived server-side
@@ -985,7 +982,8 @@ async def finalize_approval(
         matric_number=matric_number,
         student_name=request.student_name or f"Student ({matric_number})",
         curriculum_year=request.curriculum_year,
-        program_code=request.program_code
+        program_code=request.program_code,
+        tenant_id=tenant_id
     )
 
     try:
@@ -1265,19 +1263,12 @@ async def get_student_progress(
     t_stage2 = time.perf_counter()
 
     async def _fetch_template_data():
-        cohort_res = await _to_thread_retry(
-            lambda: supabase_svc.client.table("cohorts")
-            .select("template_id")
-            .eq("id", cohort_id)
-            .limit(1)
-            .execute()
-        )
-        if not cohort_res.data or not cohort_res.data[0].get("template_id"):
+        template_id = await _to_thread_retry(supabase_svc._student_template_id, clean_matric, tenant_id)
+        if not template_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cohort for student '{clean_matric}' has no degree template assigned."
             )
-        template_id = cohort_res.data[0]["template_id"]
 
         def _fetch_dt():
             return (
@@ -1507,19 +1498,12 @@ async def put_progress_override(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Student '{clean_matric}' has no cohort assigned"
         )
-    cohort_res = (
-        supabase_svc.client.table("cohorts")
-        .select("template_id")
-        .eq("id", cohort_id)
-        .limit(1)
-        .execute()
-    )
-    if not cohort_res.data or not cohort_res.data[0].get("template_id"):
+    student_template_id = supabase_svc._student_template_id(clean_matric, tenant_id)
+    if not student_template_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cohort for student '{clean_matric}' has no degree template assigned"
         )
-    student_template_id = cohort_res.data[0]["template_id"]
 
     clean_template_course_id = None
     if kind == "assign":

@@ -125,6 +125,7 @@ async def notify_student_advising_log(
         recent_res = (
             svc.client.table("advising_logs")
             .select("id, notified_at")
+            .eq("tenant_id", log.get("tenant_id"))
             .eq("student_matric_no", student_matric)
             .neq("id", log_id)
             .gte("notified_at", cutoff)
@@ -155,6 +156,7 @@ async def notify_student_advising_log(
     student_res = (
         svc.client.table("students")
         .select("name, institutional_email")
+        .eq("tenant_id", log.get("tenant_id"))
         .eq("matric_no", student_matric)
         .limit(1)
         .execute()

@@ -44,6 +44,7 @@ def _setup_mock_supabase(mock_supa_cls, log_data, recent_notifs=None, student_da
             eq_mock = MagicMock()
             select_mock.eq.return_value = eq_mock
             eq_mock.limit.return_value.execute.return_value = MagicMock(data=[log_data] if log_data else [])
+            eq_mock.eq.return_value = eq_mock  # extra tenant_id filter
             
             # rate limit check: .select("id, notified_at").eq("student_matric_no", ...).neq("id", ...).gte("notified_at", ...).limit(1).execute()
             neq_mock = MagicMock()
@@ -64,6 +65,7 @@ def _setup_mock_supabase(mock_supa_cls, log_data, recent_notifs=None, student_da
             select_mock.eq.return_value = eq_mock
             st_data = student_data if student_data is not None else {"name": "Test Student", "institutional_email": "student@university.edu.my"}
             eq_mock.limit.return_value.execute.return_value = MagicMock(data=[st_data] if st_data else [])
+            eq_mock.eq.return_value = eq_mock  # extra tenant_id filter
 
         elif table_name == "advisors":
             select_mock = MagicMock()

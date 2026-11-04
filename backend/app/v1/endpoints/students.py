@@ -194,7 +194,7 @@ async def patch_student_exemptions(
                         detail=f"Credits are required for '{clean_code}' (0 or more)."
                     )
                 # Check for existing record
-                existing_res = svc.client.table("academic_records").select("id, grade").eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
+                existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
                 old_grade = existing_res.data[0].get("grade") if existing_res.data else None
 
                 svc.client.table("academic_records").upsert({
@@ -219,10 +219,10 @@ async def patch_student_exemptions(
                 })
 
             elif action_type == "remove":
-                existing_res = svc.client.table("academic_records").select("id, grade").eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
+                existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
                 old_grade = existing_res.data[0].get("grade") if existing_res.data else None
 
-                svc.client.table("academic_records").delete().eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
+                svc.client.table("academic_records").delete().eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
 
                 audit_rows.append({
                     "tenant_id": student_tenant,
@@ -240,7 +240,7 @@ async def patch_student_exemptions(
 
     # 5. Persist student updates
     if student_updates:
-        svc.client.table("students").update(student_updates).eq("matric_no", clean_matric).execute()
+        svc.client.table("students").update(student_updates).eq("tenant_id", student_tenant).eq("matric_no", clean_matric).execute()
 
     # 6. Persist exemption audits
     if audit_rows:

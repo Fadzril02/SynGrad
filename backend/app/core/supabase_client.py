@@ -125,26 +125,31 @@ class SupabaseService:
             print(f"[Auto-Purge WARNING] Could not delete '{file_path}' from '{bucket_name}': {e}")
             return False
 
+    def _student_template_id(self, matric_no: str, tenant_id: str) -> Optional[str]:
+        """student -> cohort -> template_id, scoped to the tenant. None when no cohort/template. DB errors raise."""
+        self._ensure_ready()
+        if not tenant_id:
+            raise ValueError("tenant_id is required to resolve a student's degree template.")
+        stu = (
+            self.client.table("students").select("cohort_id")
+            .eq("tenant_id", tenant_id).eq("matric_no", (matric_no or "").strip().upper())
+            .limit(1).execute()
+        )
+        cohort_id = stu.data[0].get("cohort_id") if stu.data else None
+        if not cohort_id:
+            return None
+        cohort = self.client.table("cohorts").select("template_id").eq("id", cohort_id).limit(1).execute()
+        return cohort.data[0].get("template_id") if cohort.data else None
+
     def get_template_course_catalog(
-        self, matric_no: str, cohort_id: Optional[str] = None
+        self, matric_no: str, tenant_id: str
     ) -> Optional[Dict[str, Dict[str, Any]]]:
         """
         Course catalogue (code -> {code, name, credits, category, prerequisites}) from the
         student's degree template: student -> cohort -> template -> template_courses.
         Returns None when the student has no cohort/template yet. DB errors raise.
         """
-        self._ensure_ready()
-        if not cohort_id:
-            stu = (
-                self.client.table("students").select("cohort_id")
-                .eq("matric_no", (matric_no or "").strip().upper()).limit(1).execute()
-            )
-            cohort_id = stu.data[0].get("cohort_id") if stu.data else None
-        if not cohort_id:
-            return None
-
-        cohort = self.client.table("cohorts").select("template_id").eq("id", cohort_id).limit(1).execute()
-        template_id = cohort.data[0].get("template_id") if cohort.data else None
+        template_id = self._student_template_id(matric_no, tenant_id)
         if not template_id:
             return None
 
@@ -173,7 +178,8 @@ class SupabaseService:
         matric_number: str,
         student_name: str,
         curriculum_year: Optional[str] = None,
-        program_code: Optional[str] = None
+        program_code: Optional[str] = None,
+        tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Finds existing student or inserts a new student record into 'students' table.
@@ -189,13 +195,17 @@ class SupabaseService:
         if not self.client:
             return {"matric_no": clean_matric, "name": student_name}
 
-        # Check existing student by matric_no
-        res = self.client.table("students").select("*").eq("matric_no", clean_matric).execute()
+        if not tenant_id:
+            raise ValueError("tenant_id is required to find or create a student record.")
+
+        # Check existing student by (tenant_id, matric_no)
+        res = self.client.table("students").select("*").eq("tenant_id", tenant_id).eq("matric_no", clean_matric).execute()
         if res.data:
             return res.data[0]
 
         # Insert new student record matching live schema
         new_student = {
+            "tenant_id": tenant_id,
             "matric_no": clean_matric,
             "name": student_name,
             "advisor_staff_id": clean_advisor,
@@ -208,7 +218,8 @@ class SupabaseService:
 
     def get_student_block_exempted_credits(
         self,
-        matric_no: str
+        matric_no: str,
+        tenant_id: str
     ) -> tuple[int, Optional[int]]:
         """
         Fetches block_exempted_credits and graduation_credit_requirement from the
@@ -226,6 +237,7 @@ class SupabaseService:
                 self.client
                 .table("students")
                 .select("block_exempted_credits, graduation_credit_requirement")
+                .eq("tenant_id", tenant_id)
                 .eq("matric_no", clean_matric)
                 .maybe_single()
                 .execute()
@@ -298,7 +310,7 @@ class SupabaseService:
                 "academic_status": "Good Standing" if summary.overall_traffic_light != "RED" else "At-Risk",
                 "audit_status": "Approved"
             }
-            self.client.table("students").update(update_data).eq("matric_no", target_matric).execute()
+            self.client.table("students").update(update_data).eq("tenant_id", tenant_id).eq("matric_no", target_matric).execute()
 
             # 4. Insert degree_audits snapshot
             audit_record = {
@@ -424,25 +436,12 @@ class SupabaseService:
             "processing_status": current_status
         }
 
-    def get_student_required_credits(
-        self, matric_no: str, cohort_id: Optional[str] = None
-    ) -> Optional[int]:
+    def get_student_required_credits(self, matric_no: str, tenant_id: str) -> Optional[int]:
         """
         total_credits_required from the student's degree template (student -> cohort -> template).
         Returns None when the student has no cohort/template or the template has no total. DB errors raise.
         """
-        self._ensure_ready()
-        if not cohort_id:
-            stu = (
-                self.client.table("students").select("cohort_id")
-                .eq("matric_no", (matric_no or "").strip().upper()).limit(1).execute()
-            )
-            cohort_id = stu.data[0].get("cohort_id") if stu.data else None
-        if not cohort_id:
-            return None
-
-        cohort = self.client.table("cohorts").select("template_id").eq("id", cohort_id).limit(1).execute()
-        template_id = cohort.data[0].get("template_id") if cohort.data else None
+        template_id = self._student_template_id(matric_no, tenant_id)
         if not template_id:
             return None
 

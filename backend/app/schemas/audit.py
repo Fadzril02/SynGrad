@@ -118,7 +118,6 @@ class FinalizeApprovalRequest(BaseModel):
     university_id: Optional[str] = ""
     curriculum_year: Optional[str] = None
     program_code: Optional[str] = None
-    cohort_id: Optional[str] = Field(None, description="UUID of student's cohort")
     academic_session: Optional[str] = Field(None, description="Academic session e.g. 2024/2025")
     semester: Optional[Any] = Field(None, description="Semester number 1-4")
     pngk: Optional[float] = Field(None, description="Cumulative GPA printed on transcript for verification")

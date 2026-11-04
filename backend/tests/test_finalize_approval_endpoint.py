@@ -596,3 +596,29 @@ def test_finalize_approval_no_template_credits_warns():
         summary = response.json()["summary"]
         assert summary["total_credits_required"] == 0
         assert any("credit total" in w for w in summary["warnings"])
+
+
+def test_finalize_approval_ignores_request_cohort_id():
+    """Template comes from students -> cohort in the DB; a cohort_id in the body is ignored."""
+    with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
+        mock_svc.get_template_course_catalog.return_value = {}
+        mock_svc.get_student_required_credits.return_value = 130
+        mock_svc.get_student_block_exempted_credits.return_value = (0, None)
+        mock_svc.persist_audit_results.return_value = "audit-1"
+        payload = {**_approval_payload(), "cohort_id": "someone-elses-cohort"}
+        response = client.post("/api/v1/audit/finalize-approval", json=payload, headers=AUTH_HEADERS)
+        assert response.status_code == 200
+        for fn in (mock_svc.get_template_course_catalog, mock_svc.get_student_required_credits):
+            kwargs = fn.call_args.kwargs
+            assert "cohort_id" not in kwargs and kwargs["tenant_id"]
+
+
+def test_finalize_approval_student_override_skips_template_total():
+    with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
+        mock_svc.get_template_course_catalog.return_value = {}
+        mock_svc.get_student_block_exempted_credits.return_value = (0, 140)
+        mock_svc.persist_audit_results.return_value = "audit-1"
+        response = client.post("/api/v1/audit/finalize-approval", json=_approval_payload(), headers=AUTH_HEADERS)
+        assert response.status_code == 200
+        assert response.json()["summary"]["total_credits_required"] == 140
+        mock_svc.get_student_required_credits.assert_not_called()
