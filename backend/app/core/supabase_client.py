@@ -227,29 +227,26 @@ class SupabaseService:
 
         Returns:
             (block_exempted_credits: int, graduation_credit_requirement: int | None)
-            Falls back to (0, None) on any fetch failure so the audit is never blocked.
+            (0, None) only when the student row has no values. DB errors raise.
         """
+        self._ensure_ready()
         clean_matric = (matric_no or "").strip().upper()
-        if not self.client or not clean_matric:
+        if not clean_matric or not tenant_id:
+            raise ValueError("matric_no and tenant_id are required to read a student's credit overrides.")
+        res = (
+            self.client
+            .table("students")
+            .select("block_exempted_credits, graduation_credit_requirement")
+            .eq("tenant_id", tenant_id)
+            .eq("matric_no", clean_matric)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
             return 0, None
-        try:
-            res = (
-                self.client
-                .table("students")
-                .select("block_exempted_credits, graduation_credit_requirement")
-                .eq("tenant_id", tenant_id)
-                .eq("matric_no", clean_matric)
-                .maybe_single()
-                .execute()
-            )
-            if res and res.data:
-                block_credits = int(res.data.get("block_exempted_credits") or 0)
-                grad_req = res.data.get("graduation_credit_requirement")
-                grad_req = int(grad_req) if grad_req is not None else None
-                return block_credits, grad_req
-        except Exception as e:
-            print(f"[get_student_block_exempted_credits] Fetch warning for {clean_matric}: {e}")
-        return 0, None
+        block_credits = int(res.data[0].get("block_exempted_credits") or 0)
+        grad_req = res.data[0].get("graduation_credit_requirement")
+        return block_credits, int(grad_req) if grad_req is not None else None
 
     def persist_audit_results(
         self,

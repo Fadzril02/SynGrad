@@ -81,6 +81,10 @@ Status: **Live** (in production) · **Dev** (on dev, not merged) · **Agreed** (
 - Template lookup (2026-11-04): server-side only. The approval request no longer takes `cohort_id`; the template always comes from `students` (filtered by JWT `tenant_id` + `matric_no`) → cohort → template, in one helper `SupabaseService._student_template_id` (also used by progress and elective overrides). The student's graduation override is read first; the template total is read only when there is no override.
 - Why: a browser-sent `cohort_id` could point the audit at another cohort's template; the same lookup was copied in four places.
 
+**#24 Exemption checks use the real template and fail loud** · Dev · 2026-11-04
+- Decision: PATCH `/students/{matric}/exemptions` checks every EX/CT course against the student's `template_courses` (via `_student_template_id`) before any write. Course not in the template → 400 "Course X is not in this student's degree template". Student with no template → 400 (cannot validate). `get_student_block_exempted_credits` raises on DB errors; (0, none) only when the student row has no values.
+- Why: the old check read `degree_template_courses` and `cohorts.cohort_id` (neither exists) and swallowed the error, so any course could be exempted; the credit read hid DB errors as "no override", which silently used the template total.
+
 ## Product scope & order
 
 **#18 Build single-player mode first, then cohort integration** · Agreed · 2026-11-04

@@ -91,6 +91,17 @@ def test_template_lookup_scoped_to_tenant():
     assert svc._student_template_id("a1", "UTM") == "t-utm"
 
 
+def test_block_exempted_credits_read():
+    svc = _svc({"students": [{"block_exempted_credits": 12, "graduation_credit_requirement": 120}]})
+    assert svc.get_student_block_exempted_credits("a1", "UTM") == (12, 120)
+
+
+def test_block_exempted_credits_db_error_raises():
+    svc = _svc({"students": RuntimeError("db down")})
+    with pytest.raises(RuntimeError, match="db down"):
+        svc.get_student_block_exempted_credits("A1", "UTM")
+
+
 def test_template_lookup_requires_tenant():
     with pytest.raises(ValueError):
         _svc({})._student_template_id("A1", "")

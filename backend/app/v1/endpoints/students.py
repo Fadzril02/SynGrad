@@ -118,19 +118,21 @@ async def patch_student_exemptions(
             detail=f"Forbidden: Advisor '{advisor_staff_id}' is not the assigned advisor for student '{clean_matric}'."
         )
 
-    # 4. Process Course Template Validation if adding courses
-    template_course_codes = set()
-    cohort_id = student.get("cohort_id")
-    if cohort_id:
-        try:
-            cohort_res = svc.client.table("cohorts").select("template_id").eq("cohort_id", cohort_id).limit(1).execute()
-            if cohort_res.data and cohort_res.data[0].get("template_id"):
-                tmpl_id = cohort_res.data[0]["template_id"]
-                tc_res = svc.client.table("degree_template_courses").select("course_code").eq("template_id", tmpl_id).execute()
-                if tc_res.data:
-                    template_course_codes = {r["course_code"].replace(" ", "").upper() for r in tc_res.data}
-        except Exception:
-            pass
+    # 4. Every EX/CT course must be in the student's degree template; checked before any write. DB errors raise.
+    if request.course_actions:
+        catalog = svc.get_template_course_catalog(clean_matric, student_tenant)
+        if catalog is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Student '{clean_matric}' has no degree template; exemptions cannot be validated."
+            )
+        for ca in request.course_actions:
+            clean_code = ca.course_code.replace(" ", "").upper()
+            if clean_code not in catalog:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Course {clean_code} is not in this student's degree template"
+                )
 
     audit_rows: List[dict] = []
     old_entry_sem = int(student.get("entry_semester") or 1)
@@ -178,13 +180,6 @@ async def patch_student_exemptions(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid exemption grade '{grade_val}'. Only 'EX' (exemption) and 'CT' (credit transfer) are allowed."
-                )
-
-            # If template courses were resolved, ensure course belongs to student's template
-            if template_course_codes and clean_code not in template_course_codes:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Course '{clean_code}' is not part of student's cohort degree template."
                 )
 
             if action_type == "add":

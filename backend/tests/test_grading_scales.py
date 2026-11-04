@@ -331,20 +331,6 @@ def _mock_supabase_for_exemptions(
             tbl.upsert.return_value.execute.return_value = MagicMock(data=[{}])
             tbl.delete.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
 
-        elif table_name == "cohorts":
-            sel = MagicMock()
-            tbl.select.return_value = sel
-            eq_m = MagicMock()
-            sel.eq.return_value = eq_m
-            eq_m.limit.return_value.execute.return_value = MagicMock(data=[{"template_id": "tmpl-1"}])
-
-        elif table_name == "degree_template_courses":
-            sel = MagicMock()
-            tbl.select.return_value = sel
-            eq_m = MagicMock()
-            sel.eq.return_value = eq_m
-            eq_m.execute.return_value = MagicMock(data=[{"course_code": "SECJ1013"}])
-
         elif table_name == "exemption_audit":
             def mock_insert(rows):
                 inserted_audits.extend(rows)
@@ -356,6 +342,7 @@ def _mock_supabase_for_exemptions(
         return tbl
 
     mock_client.table.side_effect = mock_table
+    mock_svc.get_template_course_catalog.return_value = {"SECJ1013": {"code": "SECJ1013"}}
     return mock_svc, inserted_audits
 
 
