@@ -10,18 +10,22 @@ except ImportError:
     from backend.app.v1.endpoints import students
 
 
-def _svc(catalog):
+def _svc(catalog, audit_error=None):
     rows = {
         "students": [{"matric_no": "A1", "tenant_id": "UTM", "advisor_staff_id": "S1", "cohort_id": "c1"}],
         "advisors": [{"staff_id": "S1", "tenant_id": "UTM"}],
     }
     client = MagicMock()
+    client.queries = []
 
     def table(name):
         q = MagicMock()
         for m in ("select", "eq", "limit", "upsert", "delete", "update", "insert"):
             getattr(q, m).return_value = q
         q.execute.return_value = MagicMock(data=rows.get(name, []))
+        if name == "exemption_audit" and audit_error:
+            q.execute.side_effect = audit_error
+        client.queries.append((name, q))
         return q
 
     client.table.side_effect = table
@@ -30,9 +34,9 @@ def _svc(catalog):
     return svc
 
 
-def _patch(svc, code):
+def _patch(svc, code, *more, action="add"):
     req = students.StudentExemptionsPatchRequest(
-        course_actions=[{"action": "add", "course_code": code, "grade": "EX", "credits": 3}]
+        course_actions=[{"action": action, "course_code": code, "grade": "EX", "credits": 3}, *more]
     )
     with patch.object(students, "SupabaseService", return_value=svc):
         return asyncio.run(students.patch_student_exemptions("a1", req, {"sub": "u1"}))
@@ -64,3 +68,35 @@ def test_template_db_error_raises():
     svc.get_template_course_catalog.side_effect = RuntimeError("db down")
     with pytest.raises(RuntimeError, match="db down"):
         _patch(svc, "SECJ1013")
+
+
+def _writes(svc):
+    return [n for n, q in svc.client.queries if q.upsert.called or q.delete.called or q.update.called or q.insert.called]
+
+
+def test_remove_outside_template_is_allowed():
+    svc = _svc({"SECJ1013": {"code": "SECJ1013"}})
+    assert _patch(svc, "XXXX9999", action="remove").success
+    svc.get_template_course_catalog.assert_not_called()
+    assert "academic_records" in _writes(svc)
+
+
+def test_all_items_validated_before_any_write():
+    svc = _svc({"SECJ1013": {"code": "SECJ1013"}})
+    with pytest.raises(HTTPException) as e:
+        _patch(svc, "SECJ1013", {"action": "add", "course_code": "SECJ1013", "grade": "A", "credits": 3})
+    assert e.value.status_code == 400
+    assert _writes(svc) == []
+
+
+def test_audit_insert_failure_raises():
+    svc = _svc({"SECJ1013": {"code": "SECJ1013"}}, audit_error=RuntimeError("audit down"))
+    with pytest.raises(RuntimeError, match="audit down"):
+        _patch(svc, "SECJ1013")
+
+
+def test_student_lookup_scoped_to_advisor_tenant():
+    svc = _svc({"SECJ1013": {"code": "SECJ1013"}})
+    _patch(svc, "SECJ1013")
+    student_q = next(q for n, q in svc.client.queries if n == "students")
+    student_q.eq.assert_any_call("tenant_id", "UTM")

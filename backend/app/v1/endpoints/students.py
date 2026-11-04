@@ -56,7 +56,7 @@ async def patch_student_exemptions(
     
     Security & Validation:
       1. Requires verified Advisor JWT.
-      2. Advisor must belong to the same tenant as the student (403 otherwise).
+      2. Student is looked up inside the advisor's tenant only (404 otherwise).
       3. Advisor must be the student's assigned advisor (403 otherwise).
       4. Audits each modification in exemption_audit table.
     """
@@ -68,21 +68,7 @@ async def patch_student_exemptions(
             detail="Database service client is unavailable."
         )
 
-    # 1. Fetch student
-    stu_res = svc.client.table("students").select(
-        "matric_no, tenant_id, advisor_staff_id, entry_semester, block_exempted_credits, cohort_id"
-    ).eq("matric_no", clean_matric).limit(1).execute()
-
-    if not stu_res.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student '{clean_matric}' not found."
-        )
-    student = stu_res.data[0]
-    student_tenant = student.get("tenant_id")
-    assigned_advisor_staff = student.get("advisor_staff_id")
-
-    # 2. Identify caller advisor
+    # 1. Identify caller advisor
     jwt_sub = jwt_payload.get("sub")
     advisor_staff_id: Optional[str] = None
     advisor_tenant: Optional[str] = None
@@ -99,39 +85,70 @@ async def patch_student_exemptions(
         advisor_staff_id = app_meta.get("staff_id")
         advisor_tenant = app_meta.get("tenant_id")
 
-    if not advisor_staff_id:
+    if not advisor_staff_id or not advisor_tenant:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Authenticated user is not an authorized academic advisor."
         )
 
-    # 3. Multi-tenant and Advisor-Assignment verification
-    if str(advisor_tenant).lower() != str(student_tenant).lower():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Cross-tenant access forbidden: advisor tenant '{advisor_tenant}' does not match student tenant '{student_tenant}'."
-        )
+    # 2. Fetch student inside the advisor's tenant only; another tenant's student is "not found"
+    stu_res = svc.client.table("students").select(
+        "matric_no, tenant_id, advisor_staff_id, entry_semester, block_exempted_credits, cohort_id"
+    ).eq("tenant_id", advisor_tenant).eq("matric_no", clean_matric).limit(1).execute()
 
+    if not stu_res.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Student '{clean_matric}' not found."
+        )
+    student = stu_res.data[0]
+    student_tenant = student.get("tenant_id")
+    assigned_advisor_staff = student.get("advisor_staff_id")
+
+    # 3. Advisor-Assignment verification
     if str(advisor_staff_id).upper() != str(assigned_advisor_staff).upper():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Forbidden: Advisor '{advisor_staff_id}' is not the assigned advisor for student '{clean_matric}'."
         )
 
-    # 4. Every EX/CT course must be in the student's degree template; checked before any write. DB errors raise.
-    if request.course_actions:
-        catalog = svc.get_template_course_catalog(clean_matric, student_tenant)
+    # 4. Validate every course action before any write. Adds must be in the student's degree
+    #    template; removes are always allowed so stale/wrong exemptions can be cleaned up.
+    actions = []
+    for ca in request.course_actions or []:
+        clean_code = ca.course_code.replace(" ", "").upper()
+        action_type = ca.action.strip().lower()
+        grade_val = ca.grade.strip().upper()
+        if grade_val not in {"EX", "CT"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid exemption grade '{grade_val}'. Only 'EX' (exemption) and 'CT' (credit transfer) are allowed."
+            )
+        if action_type not in {"add", "remove"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown course action '{ca.action}'. Must be 'add' or 'remove'."
+            )
+        if action_type == "add" and (ca.credits is None or ca.credits < 0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Credits are required for '{clean_code}' (0 or more)."
+            )
+        actions.append((ca, clean_code, action_type, grade_val))
+
+    add_codes = [code for _, code, action_type, _ in actions if action_type == "add"]
+    if add_codes:
+        catalog = svc.get_template_course_catalog(clean_matric, student_tenant)  # DB errors raise
         if catalog is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Student '{clean_matric}' has no degree template; exemptions cannot be validated."
             )
-        for ca in request.course_actions:
-            clean_code = ca.course_code.replace(" ", "").upper()
-            if clean_code not in catalog:
+        for code in add_codes:
+            if code not in catalog:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Course {clean_code} is not in this student's degree template"
+                    detail=f"Course {code} is not in this student's degree template"
                 )
 
     audit_rows: List[dict] = []
@@ -170,24 +187,9 @@ async def patch_student_exemptions(
             })
 
     # Process EX / CT course records
-    if request.course_actions:
-        for ca in request.course_actions:
-            clean_code = ca.course_code.replace(" ", "").upper()
-            action_type = ca.action.strip().lower()
-            grade_val = ca.grade.strip().upper()
-
-            if grade_val not in {"EX", "CT"}:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid exemption grade '{grade_val}'. Only 'EX' (exemption) and 'CT' (credit transfer) are allowed."
-                )
-
+    if actions:
+        for ca, clean_code, action_type, grade_val in actions:
             if action_type == "add":
-                if ca.credits is None or ca.credits < 0:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Credits are required for '{clean_code}' (0 or more)."
-                    )
                 # Check for existing record
                 existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
                 old_grade = existing_res.data[0].get("grade") if existing_res.data else None
@@ -213,7 +215,7 @@ async def patch_student_exemptions(
                     "new_value": grade_val
                 })
 
-            elif action_type == "remove":
+            else:  # "remove" (validated above)
                 existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
                 old_grade = existing_res.data[0].get("grade") if existing_res.data else None
 
@@ -227,11 +229,6 @@ async def patch_student_exemptions(
                     "old_value": str(old_grade) if old_grade else None,
                     "new_value": None
                 })
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Unknown course action '{ca.action}'. Must be 'add' or 'remove'."
-                )
 
     # 5. Persist student updates
     if student_updates:
@@ -239,11 +236,7 @@ async def patch_student_exemptions(
 
     # 6. Persist exemption audits
     if audit_rows:
-        try:
-            svc.client.table("exemption_audit").insert(audit_rows).execute()
-        except Exception as e:
-            # If table not migrated in test environment, log warning
-            print(f"[exemption_audit] Insert log: {e}")
+        svc.client.table("exemption_audit").insert(audit_rows).execute()  # failure raises
 
     final_entry_sem = student_updates.get("entry_semester", old_entry_sem)
     final_block_credits = student_updates.get("block_exempted_credits", old_block_credits)

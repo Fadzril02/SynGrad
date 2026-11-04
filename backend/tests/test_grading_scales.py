@@ -289,21 +289,25 @@ def _mock_supabase_for_exemptions(
         if table_name == "students":
             sel = MagicMock()
             tbl.select.return_value = sel
-            eq_m = MagicMock()
-            sel.eq.return_value = eq_m
+            student_row = {
+                "matric_no": "A24MJ5050",
+                "tenant_id": student_tenant,
+                "advisor_staff_id": assigned_advisor,
+                "entry_semester": 1,
+                "block_exempted_credits": 0,
+                "cohort_id": "cohort-1"
+            }
 
-            if student_exists:
-                student_row = {
-                    "matric_no": "A24MJ5050",
-                    "tenant_id": student_tenant,
-                    "advisor_staff_id": assigned_advisor,
-                    "entry_semester": 1,
-                    "block_exempted_credits": 0,
-                    "cohort_id": "cohort-1"
-                }
-                eq_m.limit.return_value.execute.return_value = MagicMock(data=[student_row])
-            else:
-                eq_m.limit.return_value.execute.return_value = MagicMock(data=[])
+            def students_eq(col, val):
+                # First filter is tenant_id: only the student's own tenant finds the row
+                eq_m = MagicMock()
+                found = student_exists and col == "tenant_id" and val == student_tenant
+                eq_m.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+                    data=[student_row] if found else []
+                )
+                return eq_m
+
+            sel.eq.side_effect = students_eq
 
             upd = MagicMock()
             tbl.update.return_value = upd
@@ -385,8 +389,8 @@ def test_exemptions_endpoint_forbidden_for_cross_tenant():
                 "/api/v1/students/A24MJ5050/exemptions",
                 json={"entry_semester": 2}
             )
-            assert resp.status_code == 403
-            assert "Cross-tenant access forbidden" in resp.json()["detail"]
+            assert resp.status_code == 404
+            assert "not found" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(verify_advisor_jwt, None)
 
