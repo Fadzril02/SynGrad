@@ -243,6 +243,25 @@ def test_gpa_mismatch_warning_when_computed_differs_from_printed(utm_scale):
     assert metadata["gpa_warning"] in metadata["warnings"]
 
 
+def test_code_and_punctuated_name_on_one_line_then_tokens(utm_scale):
+    """Slip layout: 'CODE<nbsp>NAME' line (name with hyphen etc.), then GR/MN/KR/JMN/ST on own lines."""
+    fixture_lines = [
+        "SEMESTER 2 SESSION 2025/2026",
+        "SCSM2223\xa0 \xa0CROSS-PLATFORM APPLICATION DEVELOPMENT",
+        "A", "4.00", "3", "12.00", "L",
+        "SCSX1013 R&D, ETHICS (I/O) & DR. O'NEIL'S LAB",
+        "B", "3.00", "3", "9.00", "L",
+    ]
+
+    _, courses, unparsed = MalaysianTranscriptParser.parse_transcript_lines(fixture_lines, scale=utm_scale)
+
+    assert unparsed == []
+    assert [(c.course_code, c.course_name, c.grade, c.credits) for c in courses] == [
+        ("SCSM2223", "Cross-Platform Application Development", "A", 3),
+        ("SCSX1013", "R&D, Ethics (I/O) & Dr. O'Neil'S Lab", "B", 3),
+    ]
+
+
 # =============================================================================
 # 5. finalize-approval Endpoint: missing semester/session -> 422 (Requirement 5)
 # =============================================================================

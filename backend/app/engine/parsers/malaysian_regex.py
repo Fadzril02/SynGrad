@@ -27,11 +27,14 @@ UTM_COURSE_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Course-name characters: letters/digits/spaces plus - & / ( ) , . '
+COURSE_NAME_CHARS = r"[\w\s\(\)\/\-\,\&\.']"
+
 # Course Regex Pattern (single-line: allows 2 to 6 letters, optional spaces/hyphens, 3 to 5 digits, optional trailing letter)
 # Supports optional grade point and optional printed status column (e.g. LULUS, GAGAL, PASS, FAIL, EXEMPT)
 COURSE_PATTERN = re.compile(
     r'(?P<code>[A-Z]{2,6}\s*[-]?\s*[0-9]{3,5}[A-Z]?)\s+'
-    r'(?P<name>[\w\s\(\)\/\-\,\&]+?)\s+'
+    r'(?P<name>' + COURSE_NAME_CHARS + r'+?)\s+'
     r'(?P<credit>[1-9])\s+'
     r'(?P<grade>[A-D][\+\-]?|[EF]|HL|PC|EX|CT|P|LUS|TD|TS|TL)'
     r'(?:\s+(?P<gp>[0-4]\.[0-9]{2}))?'
@@ -54,6 +57,10 @@ COURSE_PATTERN_ALT = re.compile(
 
 # Individual Token Patterns for Multi-Line / Tabular Block Parsing
 CODE_TOKEN_PATTERN = re.compile(r'^[A-Z]{2,6}\s*[-]?\s*[0-9]{3,5}[A-Z]?$', re.IGNORECASE)
+# Block start with the title on the same line, e.g. "SCSM2223   CROSS-PLATFORM APPLICATION DEVELOPMENT"
+CODE_NAME_LINE_PATTERN = re.compile(
+    r'^(?P<code>[A-Z]{2,6}\s*[-]?\s*[0-9]{3,5}[A-Z]?)\s+(?P<name>[A-Z]' + COURSE_NAME_CHARS + r'*)$', re.IGNORECASE
+)
 GRADE_TOKEN_PATTERN = re.compile(r'^(?:A\+|A|A\-|B\+|B|B\-|C\+|C|C\-|D\+|D|D\-|E|F|HL|PC|EX|CT|P|LUS|TD|TS|TL)$', re.IGNORECASE)
 CREDIT_TOKEN_PATTERN = re.compile(r'^[1-9]$')
 GP_TOKEN_PATTERN = re.compile(r'^[0-4]\.[0-9]{2}$')
@@ -382,10 +389,11 @@ class MalaysianTranscriptParser:
                 continue
 
             # Path B: Multi-Line / Tabular Block Parsing
-            is_code_candidate = CODE_TOKEN_PATTERN.match(line_str) and line_str.upper() not in stop_keywords
+            code_name_m = CODE_NAME_LINE_PATTERN.match(line_str)
+            is_code_candidate = (CODE_TOKEN_PATTERN.match(line_str) or code_name_m) and line_str.upper() not in stop_keywords
             if is_code_candidate:
-                code_val = line_str.replace(" ", "").upper()
-                block_title: Optional[str] = None
+                code_val = (code_name_m.group("code") if code_name_m else line_str).replace(" ", "").upper()
+                block_title: Optional[str] = code_name_m.group("name").strip().title() if code_name_m else None
                 block_grade: Optional[str] = None
                 block_credits: Optional[int] = None
                 block_gp: Optional[float] = None
@@ -397,7 +405,7 @@ class MalaysianTranscriptParser:
                 # Scan ahead up to 7 lines for title, grade, credits, grade points, printed status, ST
                 while j < min(i + 8, n):
                     candidate_line = cleaned_lines[j]
-                    if CODE_TOKEN_PATTERN.match(candidate_line) or any(candidate_line.startswith(kw) for kw in stop_keywords):
+                    if CODE_TOKEN_PATTERN.match(candidate_line) or CODE_NAME_LINE_PATTERN.match(candidate_line) or any(candidate_line.startswith(kw) for kw in stop_keywords):
                         break
 
                     consumed_lines.append(candidate_line)
