@@ -583,3 +583,16 @@ def test_purge_marks_purged_only_after_delete():
     res = svc.purge_uploaded_document_file(document_id="d1")
     assert res["success"] is True
     svc.client.table.return_value.update.assert_called_once_with({"file_path": "[PURGED]"})
+
+
+def test_finalize_approval_no_template_credits_warns():
+    with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
+        mock_svc.get_template_course_catalog.return_value = {}
+        mock_svc.get_student_required_credits.return_value = None
+        mock_svc.get_student_block_exempted_credits.return_value = (0, None)
+        mock_svc.persist_audit_results.return_value = "audit-1"
+        response = client.post("/api/v1/audit/finalize-approval", json=_approval_payload(), headers=AUTH_HEADERS)
+        assert response.status_code == 200
+        summary = response.json()["summary"]
+        assert summary["total_credits_required"] == 0
+        assert any("credit total" in w for w in summary["warnings"])

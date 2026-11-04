@@ -1,4 +1,4 @@
-"""get_template_course_catalog: reads the student's template_courses; DB errors raise."""
+"""get_template_course_catalog / get_student_required_credits: read the student's template; DB errors raise."""
 from unittest.mock import MagicMock
 import pytest
 
@@ -54,3 +54,23 @@ def test_db_error_raises():
     svc = _svc({"cohorts": RuntimeError("db down")})
     with pytest.raises(RuntimeError, match="db down"):
         svc.get_template_course_catalog("A1", cohort_id="c1")
+
+
+def test_required_credits_from_template():
+    svc = _svc({
+        "students": [{"cohort_id": "c1"}],
+        "cohorts": [{"template_id": "t1"}],
+        "degree_templates": [{"total_credits_required": 130}],
+    })
+    assert svc.get_student_required_credits("a24mj0001") == 130
+
+
+def test_required_credits_no_template_returns_none():
+    svc = _svc({"students": [{"cohort_id": "c1"}], "cohorts": [{"template_id": None}]})
+    assert svc.get_student_required_credits("A1") is None
+
+
+def test_required_credits_db_error_raises():
+    svc = _svc({"students": RuntimeError("db down")})
+    with pytest.raises(RuntimeError, match="db down"):
+        svc.get_student_required_credits("A1")

@@ -924,13 +924,11 @@ async def finalize_approval(
             catalog = {}
             no_template_warning = "No degree template assigned to this student; prerequisites not checked."
 
-        # 3. Fetch student's degree_template via cohort_id & extract total_credits_required
+        # 3. Required credits: student's own override, else the degree template's total
         total_required_credits = supabase_svc.get_student_required_credits(
-            matric_no=matric_number,
-            cohort_id=getattr(request, "cohort_id", None),
-            program_code=request.program_code,
-            curriculum_year=request.curriculum_year
+            matric_no=matric_number, cohort_id=getattr(request, "cohort_id", None)
         )
+        no_credits_warning = None
 
         # 3a. Fetch block_exempted_credits and graduation_credit_requirement from students table.
         block_exempted_credits, student_grad_req = supabase_svc.get_student_block_exempted_credits(
@@ -938,6 +936,9 @@ async def finalize_approval(
         )
         if student_grad_req is not None:
             total_required_credits = student_grad_req
+        elif total_required_credits is None:
+            total_required_credits = 0
+            no_credits_warning = "No degree template credit total for this student; credits remaining not computed."
 
         # 3b. SECURE MULTI-TENANCY (Prevent IDOR):
         # Historical records scoped to verified tenant_id derived server-side
@@ -964,8 +965,9 @@ async def finalize_approval(
             except (ValueError, TypeError):
                 pass
 
-        if no_template_warning:
-            summary.warnings.append(no_template_warning)
+        for w in (no_template_warning, no_credits_warning):
+            if w:
+                summary.warnings.append(w)
         if cgpa_warning:
             summary.cgpa_warning = cgpa_warning
             if cgpa_warning not in summary.warnings:

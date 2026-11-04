@@ -76,6 +76,8 @@ Status: **Live** (in production) · **Dev** (on dev, not merged) · **Agreed** (
 **#23 Approval checks prerequisites from the student's template** · Dev · 2026-11-04
 - Decision: finalize-approval reads prerequisites from `template_courses` (student → cohort → template). DB errors fail the approval. If the student has no template, approval still goes through with the warning "prerequisites not checked".
 - Why: the old read used `course` / `course_prerequisite`. Neither table is in any migration, and errors were swallowed, so prerequisites were never checked.
+- Required credits (2026-11-04): the student's own `graduation_credit_requirement` if set, else `degree_templates.total_credits_required` via the same student → cohort → template path. No fallback to 120 and no program_code guess. DB errors fail the approval. No template total → required credits 0 and the warning "credits remaining not computed".
+- Why: errors were swallowed and a hard-coded 120 was used, so wrong credit totals looked real.
 
 ## Product scope & order
 

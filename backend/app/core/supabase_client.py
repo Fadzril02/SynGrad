@@ -425,73 +425,32 @@ class SupabaseService:
         }
 
     def get_student_required_credits(
-        self,
-        matric_no: Optional[str] = None,
-        cohort_id: Optional[str] = None,
-        program_code: Optional[str] = None,
-        curriculum_year: Optional[str] = None,
-        default_credits: int = 120
-    ) -> int:
+        self, matric_no: str, cohort_id: Optional[str] = None
+    ) -> Optional[int]:
         """
-        Fetches the student's degree_template via their cohort_id.
-        Extracts total_credits_required.
-        Falls back to matching program_code/curriculum_year in degree_templates,
-        or default_credits.
+        total_credits_required from the student's degree template (student -> cohort -> template).
+        Returns None when the student has no cohort/template or the template has no total. DB errors raise.
         """
         self._ensure_ready()
+        if not cohort_id:
+            stu = (
+                self.client.table("students").select("cohort_id")
+                .eq("matric_no", (matric_no or "").strip().upper()).limit(1).execute()
+            )
+            cohort_id = stu.data[0].get("cohort_id") if stu.data else None
+        if not cohort_id:
+            return None
 
-        resolved_cohort_id = cohort_id
+        cohort = self.client.table("cohorts").select("template_id").eq("id", cohort_id).limit(1).execute()
+        template_id = cohort.data[0].get("template_id") if cohort.data else None
+        if not template_id:
+            return None
 
-        # 1. If cohort_id is not provided, look it up from the student's record
-        if not resolved_cohort_id and matric_no:
-            try:
-                stu_res = (
-                    self.client.table("students")
-                    .select("cohort_id, program, syllabus_type")
-                    .eq("matric_no", matric_no.strip().upper())
-                    .maybe_single()
-                    .execute()
-                )
-                if stu_res and stu_res.data:
-                    resolved_cohort_id = stu_res.data.get("cohort_id")
-                    if not program_code:
-                        program_code = stu_res.data.get("program")
-                    if not curriculum_year:
-                        curriculum_year = stu_res.data.get("syllabus_type")
-            except Exception as e:
-                print(f"[get_student_required_credits] Student lookup warning: {e}")
-
-        # 2. Fetch degree_template via cohort_id
-        if resolved_cohort_id:
-            try:
-                cohort_res = (
-                    self.client.table("cohorts")
-                    .select("template_id, degree_templates(total_credits_required)")
-                    .eq("id", resolved_cohort_id)
-                    .maybe_single()
-                    .execute()
-                )
-                if cohort_res and cohort_res.data:
-                    tmpl = cohort_res.data.get("degree_templates")
-                    if isinstance(tmpl, dict) and "total_credits_required" in tmpl:
-                        return int(tmpl["total_credits_required"])
-                    elif isinstance(tmpl, list) and len(tmpl) > 0 and "total_credits_required" in tmpl[0]:
-                        return int(tmpl[0]["total_credits_required"])
-            except Exception as e:
-                print(f"[get_student_required_credits] Cohort template lookup warning: {e}")
-
-        # 3. Fallback: Lookup degree_templates directly if program_code is known
-        if program_code:
-            try:
-                q = self.client.table("degree_templates").select("total_credits_required").eq("program_code", program_code)
-                if curriculum_year:
-                    q = q.eq("syllabus_year", curriculum_year)
-                tmpl_res = q.limit(1).execute()
-                if tmpl_res and tmpl_res.data and len(tmpl_res.data) > 0:
-                    return int(tmpl_res.data[0]["total_credits_required"])
-            except Exception as e:
-                print(f"[get_student_required_credits] Template direct lookup warning: {e}")
-
-        return default_credits
+        tmpl = (
+            self.client.table("degree_templates").select("total_credits_required")
+            .eq("id", template_id).limit(1).execute()
+        )
+        total = tmpl.data[0].get("total_credits_required") if tmpl.data else None
+        return int(total) if total is not None else None
 
 
