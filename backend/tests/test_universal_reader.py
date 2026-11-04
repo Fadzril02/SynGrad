@@ -413,7 +413,7 @@ def test_multi_semester_saved_correctly(sample_scale):
 
     with patch.object(audit.supabase_svc, "client", _FakeDBClient(mock_db)), \
          patch.object(audit, "load_scale", return_value=sample_scale), \
-         patch.object(audit.supabase_svc, "get_university_course_catalog", return_value=mock_catalog), \
+         patch.object(audit.supabase_svc, "get_template_course_catalog", return_value=mock_catalog), \
          patch.object(audit.supabase_svc, "get_or_create_student", return_value={"id": "s1", "matric_number": "A24MJ5050", "student_name": "Student"}), \
          patch.object(audit.supabase_svc, "get_student_block_exempted_credits", return_value=(0, None)), \
          patch.object(audit.supabase_svc, "persist_audit_results", return_value="audit-123") as mock_persist:

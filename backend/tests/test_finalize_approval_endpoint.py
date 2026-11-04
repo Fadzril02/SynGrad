@@ -125,7 +125,7 @@ def test_finalize_approval_fastapi_endpoint_flow():
     patch_id_target = "app.v1.endpoints.audit._check_advisor_identity" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit._check_advisor_identity"
     
     with patch(patch_target) as mock_svc, patch(patch_id_target) as mock_check_id:
-        mock_svc.get_university_course_catalog.return_value = mock_catalog
+        mock_svc.get_template_course_catalog.return_value = mock_catalog
         mock_svc.get_or_create_student.return_value = mock_student
         mock_svc.persist_audit_results.return_value = "audit-uuid-12345"
         mock_svc.get_student_block_exempted_credits.return_value = (0, None)
@@ -266,7 +266,7 @@ def test_finalize_approval_forged_tenant_idor_ignored():
     patch_target = "app.v1.endpoints.audit.supabase_svc" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit.supabase_svc"
     try:
         with patch(patch_target) as mock_svc:
-            mock_svc.get_university_course_catalog.return_value = mock_catalog
+            mock_svc.get_template_course_catalog.return_value = mock_catalog
             mock_svc.get_or_create_student.return_value = mock_student
             mock_svc.persist_audit_results.return_value = "audit-uuid-idor"
             mock_svc.get_student_block_exempted_credits.return_value = (0, None)
@@ -348,7 +348,7 @@ def test_finalize_approval_resolves_seeded_utm_uuid():
     patch_target = "app.v1.endpoints.audit.supabase_svc" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit.supabase_svc"
     try:
         with patch(patch_target) as mock_svc:
-            mock_svc.get_university_course_catalog.return_value = mock_catalog
+            mock_svc.get_template_course_catalog.return_value = mock_catalog
             mock_svc.get_or_create_student.return_value = mock_student
             mock_svc.persist_audit_results.return_value = "audit-uuid-test"
             mock_svc.get_student_block_exempted_credits.return_value = (0, None)
@@ -400,7 +400,7 @@ def test_finalize_approval_resolves_custom_university_uuid_from_db():
     patch_target = "app.v1.endpoints.audit.supabase_svc" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit.supabase_svc"
     try:
         with patch(patch_target) as mock_svc:
-            mock_svc.get_university_course_catalog.return_value = mock_catalog
+            mock_svc.get_template_course_catalog.return_value = mock_catalog
             mock_svc.get_or_create_student.return_value = mock_student
             mock_svc.persist_audit_results.return_value = "audit-uuid-usm"
             mock_svc.get_student_block_exempted_credits.return_value = (0, None)
@@ -532,7 +532,7 @@ def _audit_mod():
 def test_finalize_approval_status_write_failure_is_not_approved():
     """If marking the document Approved fails, the endpoint must not report Approved."""
     with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
-        mock_svc.get_university_course_catalog.return_value = {}
+        mock_svc.get_template_course_catalog.return_value = {}
         mock_svc.get_student_required_credits.return_value = 120
         mock_svc.get_student_block_exempted_credits.return_value = (0, None)
         mock_svc.persist_audit_results.return_value = "audit-1"
@@ -544,7 +544,7 @@ def test_finalize_approval_status_write_failure_is_not_approved():
 
 def test_finalize_approval_purge_failure_still_approves():
     with patch(f"{_audit_mod()}.supabase_svc") as mock_svc, patch(f"{_audit_mod()}._check_advisor_identity"):
-        mock_svc.get_university_course_catalog.return_value = {}
+        mock_svc.get_template_course_catalog.return_value = {}
         mock_svc.get_student_required_credits.return_value = 120
         mock_svc.get_student_block_exempted_credits.return_value = (0, None)
         mock_svc.persist_audit_results.return_value = "audit-1"

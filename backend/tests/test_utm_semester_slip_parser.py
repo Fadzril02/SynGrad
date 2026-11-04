@@ -343,7 +343,7 @@ def test_finalize_approval_cgpa_mismatch_with_pngk(utm_scale):
     patch_id_target = "app.v1.endpoints.audit._check_advisor_identity" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit._check_advisor_identity"
     patch_scale_target = "app.v1.endpoints.audit.load_scale" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit.load_scale"
     with patch(patch_target) as mock_svc, patch(patch_id_target) as mock_check_id, patch(patch_scale_target, return_value=utm_scale):
-        mock_svc.get_university_course_catalog.return_value = mock_catalog
+        mock_svc.get_template_course_catalog.return_value = mock_catalog
         mock_svc.get_or_create_student.return_value = mock_student
         mock_svc.persist_audit_results.return_value = "audit-uuid-test"
         mock_svc.get_student_block_exempted_credits.return_value = (0, None)

@@ -125,52 +125,45 @@ class SupabaseService:
             print(f"[Auto-Purge WARNING] Could not delete '{file_path}' from '{bucket_name}': {e}")
             return False
 
-    def get_university_course_catalog(self, university_id: str = "") -> Dict[str, Dict[str, Any]]:
+    def get_template_course_catalog(
+        self, matric_no: str, cohort_id: Optional[str] = None
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
         """
-        Fetches all courses and prerequisites for a given university.
-        Returns dict: course_code -> course_data
+        Course catalogue (code -> {code, name, credits, category, prerequisites}) from the
+        student's degree template: student -> cohort -> template -> template_courses.
+        Returns None when the student has no cohort/template yet. DB errors raise.
         """
         self._ensure_ready()
-        catalog: Dict[str, Dict[str, Any]] = {}
-        
-        try:
-            res = self.client.table("course").select("*").execute()
-            for row in res.data or []:
-                raw_code = row.get("course_code") or row.get("code") or ""
-                code = raw_code.replace(" ", "").upper()
-                if code:
-                    catalog[code] = {
-                        "code": code,
-                        "name": row.get("course_name") or row.get("name") or "",
-                        "credits": row["credit_hour"] if row.get("credit_hour") is not None else row.get("credits"),
-                        "category": row.get("course_type") or row.get("category") or "Core",
-                        "prerequisites": row.get("prerequisites") or {"type": "AND", "courses": [], "min_grade": None, "min_credits": 0}
-                    }
+        if not cohort_id:
+            stu = (
+                self.client.table("students").select("cohort_id")
+                .eq("matric_no", (matric_no or "").strip().upper()).limit(1).execute()
+            )
+            cohort_id = stu.data[0].get("cohort_id") if stu.data else None
+        if not cohort_id:
+            return None
 
-            if catalog:
-                # Augment catalog with course_prerequisite table if present
-                try:
-                    prereq_res = self.client.table("course_prerequisite").select("*").execute()
-                    for p in prereq_res.data or []:
-                        c_code = (p.get("course_code") or "").replace(" ", "").upper()
-                        p_code = (p.get("prereq_code") or p.get("prerequisite_course_code") or "").replace(" ", "").upper()
-                        min_g = p.get("min_grade")
-                        if c_code and p_code and c_code in catalog:
-                            existing_prereqs = catalog[c_code].get("prerequisites", {})
-                            existing_courses = existing_prereqs.get("courses", [])
-                            if not any((c if isinstance(c, str) else c.get("course_code")) == p_code for c in existing_courses):
-                                existing_courses.append({"course_code": p_code, "min_grade": min_g})
-                            catalog[c_code]["prerequisites"] = {
-                                "type": existing_prereqs.get("type", "AND"),
-                                "courses": existing_courses,
-                                "min_grade": min_g,
-                                "min_credits": existing_prereqs.get("min_credits", 0)
-                            }
-                except Exception:
-                    pass
-        except Exception:
-            pass
-            
+        cohort = self.client.table("cohorts").select("template_id").eq("id", cohort_id).limit(1).execute()
+        template_id = cohort.data[0].get("template_id") if cohort.data else None
+        if not template_id:
+            return None
+
+        rows = (
+            self.client.table("template_courses")
+            .select("course_code, course_name, credit_hour, category, prerequisites")
+            .eq("template_id", template_id).execute()
+        )
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for row in rows.data or []:
+            code = (row.get("course_code") or "").replace(" ", "").upper()
+            if code:
+                catalog[code] = {
+                    "code": code,
+                    "name": row.get("course_name") or "",
+                    "credits": row.get("credit_hour"),
+                    "category": row.get("category") or "",
+                    "prerequisites": row.get("prerequisites") or {},
+                }
         return catalog
 
     def get_or_create_student(

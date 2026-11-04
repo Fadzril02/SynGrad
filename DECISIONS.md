@@ -73,6 +73,10 @@ Status: **Live** (in production) · **Dev** (on dev, not merged) · **Agreed** (
 **#17 Retired courses & equivalences; semester load rules** · Agreed · 2026-10-27
 - Decision: never delete courses ("retired from intake X"); `course_equivalences` table; min/max credits per semester for the planner.
 
+**#23 Approval checks prerequisites from the student's template** · Dev · 2026-11-04
+- Decision: finalize-approval reads prerequisites from `template_courses` (student → cohort → template). DB errors fail the approval. If the student has no template, approval still goes through with the warning "prerequisites not checked".
+- Why: the old read used `course` / `course_prerequisite`. Neither table is in any migration, and errors were swallowed, so prerequisites were never checked.
+
 ## Product scope & order
 
 **#18 Build single-player mode first, then cohort integration** · Agreed · 2026-11-04

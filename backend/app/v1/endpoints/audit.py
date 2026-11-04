@@ -915,8 +915,14 @@ async def finalize_approval(
                 raw_extracted_text=f"[ADVISOR APPROVED] {code} {grade} ({credits_val} cr)"
             ))
 
-        # 2. Fetch Course Catalog & Prerequisite Graph for University
-        catalog = supabase_svc.get_university_course_catalog(request.university_id)
+        # 2. Course catalogue + prerequisites from the student's degree template
+        catalog = supabase_svc.get_template_course_catalog(
+            matric_no=matric_number, cohort_id=getattr(request, "cohort_id", None)
+        )
+        no_template_warning = None
+        if catalog is None:
+            catalog = {}
+            no_template_warning = "No degree template assigned to this student; prerequisites not checked."
 
         # 3. Fetch student's degree_template via cohort_id & extract total_credits_required
         total_required_credits = supabase_svc.get_student_required_credits(
@@ -958,6 +964,8 @@ async def finalize_approval(
             except (ValueError, TypeError):
                 pass
 
+        if no_template_warning:
+            summary.warnings.append(no_template_warning)
         if cgpa_warning:
             summary.cgpa_warning = cgpa_warning
             if cgpa_warning not in summary.warnings:

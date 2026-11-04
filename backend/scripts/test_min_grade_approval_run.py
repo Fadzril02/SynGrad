@@ -35,7 +35,7 @@ def run_case(title: str, catalog: dict, courses: list):
 
     patch_target = "app.v1.endpoints.audit.supabase_svc" if "app.v1.endpoints.audit" in sys.modules else "backend.app.v1.endpoints.audit.supabase_svc"
     with patch(patch_target) as mock_svc:
-        mock_svc.get_university_course_catalog.return_value = catalog
+        mock_svc.get_template_course_catalog.return_value = catalog
         mock_svc.get_or_create_student.return_value = {"id": "test-student-id", "matric_number": "A24MJ9999"}
         mock_svc.persist_audit_results.return_value = "audit-uuid-test"
         mock_svc.client = None
