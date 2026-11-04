@@ -223,7 +223,9 @@ def compute_cgpa(
         if not clean_code or not grade:
             continue
 
-        credits_val = int(creds) if creds is not None else 3
+        if creds is None:
+            raise ValueError(f"Missing credits for {code}")
+        credits_val = int(creds)
 
         # Validate grade existence (fail loud)
         defn = scale.get_definition(grade, clean_code)
@@ -295,7 +297,9 @@ def compute_completed_credits(
         if not clean_code or not grade:
             continue
 
-        credits_val = int(creds) if creds is not None else 3
+        if creds is None:
+            raise ValueError(f"Missing credits for {code}")
+        credits_val = int(creds)
         defn = scale.get_definition(grade, clean_code)
 
         if defn.is_pass and defn.counts_as_completed:

@@ -333,3 +333,23 @@ def test_vision_prompt_names_previous_session_and_keeps_zero_credits(monkeypatch
         prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert 'semester_no 2, session "2023/2024"' in prompt
     assert out["semesters"][0]["courses"][0]["credits"] == 0
+
+
+def test_scanned_half_read_header_on_page2_is_not_carried_over(monkeypatch):
+    """A page-2 block with semester_no but no session stays its own (2, "") entry for validate_slip to flag."""
+    monkeypatch.setattr(settings, "LLM_VISION_MODEL", "llama-3.2-11b-vision-preview")
+    monkeypatch.setattr(settings, "LLM_API_KEY", "mock-key")
+
+    page1 = {"semesters": [
+        {"semester_no": 1, "session": "2023/2024", "courses": [{"code": "CS101", "credits": 3, "grade": "A"}]},
+    ], "matric_no": "A24MJ5050"}
+    page2 = {"semesters": [
+        {"semester_no": 2, "session": "", "courses": [{"code": "CS102", "credits": 3, "grade": "B"}]},
+    ], "matric_no": None}
+
+    with patch.object(scanned_reader, "render_pdf_to_images", return_value=[b"p1", b"p2"]), \
+         patch.object(scanned_reader, "extract_page_with_vision", side_effect=[page1, page2]):
+        result = scanned_reader.extract_scanned_transcript(b"mock-pdf", tenant_ctx={})
+
+    by_key = {(s["semester_no"], s["session"]): [c["code"] for c in s["courses"]] for s in result["semesters"]}
+    assert by_key == {(1, "2023/2024"): ["CS101"], (2, ""): ["CS102"]}

@@ -473,3 +473,36 @@ def test_exemptions_endpoint_success_and_audit_written():
                 assert a["changed_by_staff_id"] == "STAFF-UTM-01"
     finally:
         app.dependency_overrides.pop(verify_advisor_jwt, None)
+
+
+@pytest.mark.parametrize("bad_credits", [None, -1])
+def test_exemptions_endpoint_rejects_missing_or_negative_credits(bad_credits):
+    app.dependency_overrides[verify_advisor_jwt] = lambda: _override_jwt(staff_id="STAFF-UTM-01", tenant_id="UTM")
+    try:
+        with patch("app.v1.endpoints.students.SupabaseService") as m1, patch("backend.app.v1.endpoints.students.SupabaseService", create=True) as m2:
+            mock_svc, audits = _mock_supabase_for_exemptions(
+                student_tenant="UTM",
+                assigned_advisor="STAFF-UTM-01",
+                caller_staff_id="STAFF-UTM-01",
+                caller_tenant="UTM"
+            )
+            m1.return_value = mock_svc
+            m2.return_value = mock_svc
+
+            payload = {"course_actions": [
+                {"action": "add", "course_code": "SECJ1013", "grade": "EX", "credits": bad_credits}
+            ]}
+            resp = client.patch("/api/v1/students/A24MJ5050/exemptions", json=payload)
+            assert resp.status_code == 400
+            assert "Credits are required" in resp.json()["detail"]
+            assert audits == []
+    finally:
+        app.dependency_overrides.pop(verify_advisor_jwt, None)
+
+
+def test_missing_credits_raise_instead_of_defaulting(utm_fixture_scale):
+    recs = [{"course_code": "SECJ1013", "grade": "A", "credits": None, "semester": "SEM 1 2024/2025"}]
+    with pytest.raises(ValueError, match="Missing credits for SECJ1013"):
+        compute_cgpa(recs, utm_fixture_scale)
+    with pytest.raises(ValueError, match="Missing credits for SECJ1013"):
+        compute_completed_credits(recs, utm_fixture_scale)
