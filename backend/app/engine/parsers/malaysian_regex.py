@@ -436,7 +436,7 @@ class MalaysianTranscriptParser:
 
                 # If we successfully captured at least code and grade, record the parsed course
                 if block_grade:
-                    final_credits = block_credits or 3
+                    final_credits = block_credits  # None -> validate_slip flags it
                     final_gp = block_gp if block_gp is not None else scale.grade_points(block_grade, code_val)
                     is_p = scale.is_pass(block_grade, code_val)
                     in_cgpa = scale.counts_in_cgpa(block_grade, code_val)
@@ -513,7 +513,7 @@ class MalaysianTranscriptParser:
         tot_gp = 0.0
         tot_cr = 0
         for c in parsed_courses:
-            if scale.counts_in_cgpa(c.grade, c.course_code):
+            if c.credits is not None and scale.counts_in_cgpa(c.grade, c.course_code):
                 pts = scale.grade_points(c.grade, c.course_code)
                 tot_gp += (pts * c.credits)
                 tot_cr += c.credits

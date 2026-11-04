@@ -72,7 +72,7 @@ class MicroLLMFallback:
                 results.append(ParsedLineItem(
                     course_code=item.get("course_code", "UNKNOWN").replace(" ", "").upper(),
                     course_name=item.get("course_name", "Unknown Course").title(),
-                    credits=int(item.get("credits", 3)),
+                    credits=int(item["credits"]) if item.get("credits") is not None else None,
                     grade=item.get("grade", "HL").upper(),
                     grade_point=float(item.get("grade_point", 0.0)),
                     semester=current_semester,

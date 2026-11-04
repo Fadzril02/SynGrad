@@ -34,7 +34,7 @@ class ExtractPDFResponse(BaseModel):
 class ParsedLineItem(BaseModel):
     course_code: str
     course_name: str
-    credits: int
+    credits: Optional[int]  # None = not read from the slip; validate_slip flags it
     grade: str
     grade_point: float
     semester: Optional[str] = None

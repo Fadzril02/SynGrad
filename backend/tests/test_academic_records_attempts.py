@@ -317,6 +317,32 @@ def test_reapproving_same_semester_updates_rather_than_duplicates():
     assert secj1023[0].semester == "SEM 2 2024/2025"
 
 
+def test_zero_credit_record_stays_zero_after_later_approval():
+    """A saved HL (pass, 0 credits) record keeps credits 0 when a later semester is approved."""
+    existing_db_rows = [{
+        "tenant_id": "UTM", "matric_no": "A20EC0001", "course_code": "UHLB1112",
+        "course_name": "Co-curriculum", "credits": 0, "grade": "HL", "grade_point": 0.0,
+        "semester": "SEM 1 2024/2025", "status": "Passed",
+    }]
+    mock_supabase = MagicMock()
+    q = MagicMock()
+    mock_supabase.table.return_value = q
+    q.select.return_value = q
+    q.eq.return_value = q
+    q.execute.return_value = MagicMock(data=existing_db_rows)
+    fetch_and_merge_historical_records.__globals__["supabase_svc"].client = mock_supabase
+
+    new_records = [ParsedLineItem(course_code="SECJ1023", course_name="PT II", credits=3,
+                                  grade="A", grade_point=4.0, semester="SEM 2 2024/2025", status="Passed")]
+    merged = fetch_and_merge_historical_records("A20EC0001", new_records, tenant_id="UTM")
+    hl = [r for r in merged if r.course_code == "UHLB1112"]
+    assert len(hl) == 1 and hl[0].credits == 0
+
+    existing_db_rows[0]["credits"] = None
+    with pytest.raises(ValueError):
+        fetch_and_merge_historical_records("A20EC0001", new_records, tenant_id="UTM")
+
+
 def test_persist_audit_results_dedupes_batch_on_course_and_semester():
     """
     If a batch sent to persist_audit_results contains duplicates for (course_code, semester)

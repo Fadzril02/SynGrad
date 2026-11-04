@@ -142,7 +142,7 @@ class SupabaseService:
                     catalog[code] = {
                         "code": code,
                         "name": row.get("course_name") or row.get("name") or "",
-                        "credits": row.get("credit_hour") or row.get("credits") or 3,
+                        "credits": row["credit_hour"] if row.get("credit_hour") is not None else row.get("credits"),
                         "category": row.get("course_type") or row.get("category") or "Core",
                         "prerequisites": row.get("prerequisites") or {"type": "AND", "courses": [], "min_grade": None, "min_credits": 0}
                     }

@@ -180,13 +180,14 @@ def extract_with_llm(text: str, tenant_ctx: Optional[Dict[str, Any]] = None) -> 
                 continue
             code = str(c.get("code") or c.get("course_code") or "").strip().upper()
             name = str(c.get("name") or c.get("course_name") or code).strip()
-            raw_creds = c.get("credits") or c.get("credit_hour") or 3
+            raw_creds = c.get("credits") if c.get("credits") is not None else c.get("credit_hour")
+            creds = raw_creds  # None / unparseable pass through for validate_slip to flag
             try:
                 creds = float(raw_creds)
                 if creds.is_integer():
                     creds = int(creds)
             except (ValueError, TypeError):
-                creds = 3
+                pass
 
             grade = str(c.get("grade") or "").strip().upper()
             conformed_courses.append({

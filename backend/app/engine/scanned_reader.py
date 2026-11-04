@@ -317,7 +317,7 @@ def extract_scanned_transcript(
     pages = render_pdf_to_images(pdf_bytes)
 
     merged_semesters: List[Dict[str, Any]] = []
-    semester_map: Dict[Tuple[int, str], Dict[str, Any]] = {}
+    semester_map: Dict[Tuple[Optional[int], str], Dict[str, Any]] = {}
     detected_matric_no: Optional[str] = None
     page_warnings: List[str] = []
 
@@ -337,8 +337,9 @@ def extract_scanned_transcript(
 
         for i, s in enumerate(p_semesters):
             sem_key = (s.get("semester_no"), s.get("session") or "")
-            # Headless rows at the top of a page continue the previous page's last session
-            if i == 0 and prev_key and (sem_key[0] is None or not sem_key[1]):
+            # Headless rows at the top of a page continue the previous page's last session;
+            # a half-read header is left for validate_slip to flag.
+            if i == 0 and prev_key and sem_key == (None, ""):
                 sem_key = prev_key
             if sem_key not in semester_map:
                 new_sem = {

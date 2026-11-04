@@ -247,10 +247,13 @@ def fetch_and_merge_historical_records(matric_no: str, new_records: List[ParsedL
         ex_sem = normalize_semester(raw_sem) if raw_sem else ""
         # Keep existing row unless an incoming new record matches on (course_code, normalised semester)
         if (ex_code, ex_sem) not in new_keys:
+            if r.get("credits") is None:
+                # Saved records must always carry credits; never invent a value.
+                raise ValueError(f"Saved record {ex_code} ({ex_sem or raw_sem}) has no credits")
             merged.append(ParsedLineItem(
                 course_code=r.get("course_code"),
                 course_name=r.get("course_name") or r.get("course_code"),
-                credits=r.get("credits") or 3,
+                credits=r["credits"],
                 grade=r.get("grade"),
                 grade_point=float(r.get("grade_point") or 0.0),
                 semester=ex_sem or raw_sem,

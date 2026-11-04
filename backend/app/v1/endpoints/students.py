@@ -188,6 +188,11 @@ async def patch_student_exemptions(
                 )
 
             if action_type == "add":
+                if ca.credits is None or ca.credits < 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Credits are required for '{clean_code}' (0 or more)."
+                    )
                 # Check for existing record
                 existing_res = svc.client.table("academic_records").select("id, grade").eq("matric_no", clean_matric).eq("course_code", clean_code).execute()
                 old_grade = existing_res.data[0].get("grade") if existing_res.data else None
@@ -197,7 +202,7 @@ async def patch_student_exemptions(
                     "matric_no": clean_matric,
                     "course_code": clean_code,
                     "course_name": ca.course_name or clean_code,
-                    "credits": ca.credits or 3,
+                    "credits": ca.credits,
                     "grade": grade_val,
                     "grade_point": 0.00,
                     "status": "Exempted",
