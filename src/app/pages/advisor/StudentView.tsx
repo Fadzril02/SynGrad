@@ -442,7 +442,6 @@ export function StudentView({ student, onBack }: StudentViewProps) {
             grade: selectedExemptionGrade,
             credits: Number(courseObj?.credit_hour || 3),
             course_name: courseObj?.course_name || cleanCode,
-            semester: `Sem ${entrySemester}`,
           },
         ],
       });

@@ -243,7 +243,6 @@ export const api = {
         grade?: string;
         credits?: number;
         course_name?: string;
-        semester?: string;
       }>;
     }
   ): Promise<{

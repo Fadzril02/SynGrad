@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 try:
     from app.main import app
+    from app.v1.endpoints import students
     from app.core.auth import verify_advisor_jwt
     from app.engine.grading import (
         GradingScale,
@@ -22,6 +23,7 @@ try:
     from app.schemas.audit import ParsedLineItem
 except ImportError:
     from backend.app.main import app
+    from backend.app.v1.endpoints import students
     from backend.app.core.auth import verify_advisor_jwt
     from backend.app.engine.grading import (
         GradingScale,
@@ -333,8 +335,13 @@ def _mock_supabase_for_exemptions(
             eq1.eq.return_value = eq2
             eq2.execute.return_value = MagicMock(data=[])
             eq2.in_.return_value.execute.return_value = MagicMock(data=[])
-            tbl.upsert.return_value.execute.return_value = MagicMock(data=[{}])
+            tbl.insert.return_value.execute.return_value = MagicMock(data=[{}])
             tbl.delete.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
+
+        elif table_name == "degree_templates":
+            tbl.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+                data=[{"syllabus_year": "2024/2025"}]
+            )
 
         elif table_name == "exemption_audit":
             def mock_insert(rows):
@@ -358,10 +365,9 @@ def test_exemptions_endpoint_forbidden_for_non_advisor():
         "app_metadata": {}
     }
     try:
-        with patch("app.v1.endpoints.students.SupabaseService") as m1, patch("backend.app.v1.endpoints.students.SupabaseService", create=True) as m2:
+        with patch.object(students, "SupabaseService") as m1:
             mock_svc, _ = _mock_supabase_for_exemptions(advisor_exists=False)
             m1.return_value = mock_svc
-            m2.return_value = mock_svc
 
             resp = client.patch(
                 "/api/v1/students/A24MJ5050/exemptions",
@@ -376,7 +382,7 @@ def test_exemptions_endpoint_forbidden_for_non_advisor():
 def test_exemptions_endpoint_forbidden_for_cross_tenant():
     app.dependency_overrides[verify_advisor_jwt] = lambda: _override_jwt(staff_id="STAFF-UTM-01", tenant_id="UTM")
     try:
-        with patch("app.v1.endpoints.students.SupabaseService") as m1, patch("backend.app.v1.endpoints.students.SupabaseService", create=True) as m2:
+        with patch.object(students, "SupabaseService") as m1:
             mock_svc, _ = _mock_supabase_for_exemptions(
                 student_tenant="UKM",
                 assigned_advisor="STAFF-UTM-01",
@@ -384,7 +390,6 @@ def test_exemptions_endpoint_forbidden_for_cross_tenant():
                 caller_tenant="UTM"
             )
             m1.return_value = mock_svc
-            m2.return_value = mock_svc
 
             resp = client.patch(
                 "/api/v1/students/A24MJ5050/exemptions",
@@ -399,7 +404,7 @@ def test_exemptions_endpoint_forbidden_for_cross_tenant():
 def test_exemptions_endpoint_forbidden_for_unassigned_advisor():
     app.dependency_overrides[verify_advisor_jwt] = lambda: _override_jwt(staff_id="STAFF-UTM-01", tenant_id="UTM")
     try:
-        with patch("app.v1.endpoints.students.SupabaseService") as m1, patch("backend.app.v1.endpoints.students.SupabaseService", create=True) as m2:
+        with patch.object(students, "SupabaseService") as m1:
             mock_svc, _ = _mock_supabase_for_exemptions(
                 student_tenant="UTM",
                 assigned_advisor="STAFF-UTM-OTHER",
@@ -407,7 +412,6 @@ def test_exemptions_endpoint_forbidden_for_unassigned_advisor():
                 caller_tenant="UTM"
             )
             m1.return_value = mock_svc
-            m2.return_value = mock_svc
 
             resp = client.patch(
                 "/api/v1/students/A24MJ5050/exemptions",
@@ -422,7 +426,7 @@ def test_exemptions_endpoint_forbidden_for_unassigned_advisor():
 def test_exemptions_endpoint_success_and_audit_written():
     app.dependency_overrides[verify_advisor_jwt] = lambda: _override_jwt(staff_id="STAFF-UTM-01", tenant_id="UTM")
     try:
-        with patch("app.v1.endpoints.students.SupabaseService") as m1, patch("backend.app.v1.endpoints.students.SupabaseService", create=True) as m2:
+        with patch.object(students, "SupabaseService") as m1:
             mock_svc, audits = _mock_supabase_for_exemptions(
                 student_tenant="UTM",
                 assigned_advisor="STAFF-UTM-01",
@@ -430,7 +434,6 @@ def test_exemptions_endpoint_success_and_audit_written():
                 caller_tenant="UTM"
             )
             m1.return_value = mock_svc
-            m2.return_value = mock_svc
 
             payload = {
                 "entry_semester": 3,
@@ -471,7 +474,7 @@ def test_exemptions_endpoint_success_and_audit_written():
 def test_exemptions_endpoint_rejects_missing_or_negative_credits(bad_credits):
     app.dependency_overrides[verify_advisor_jwt] = lambda: _override_jwt(staff_id="STAFF-UTM-01", tenant_id="UTM")
     try:
-        with patch("app.v1.endpoints.students.SupabaseService") as m1, patch("backend.app.v1.endpoints.students.SupabaseService", create=True) as m2:
+        with patch.object(students, "SupabaseService") as m1:
             mock_svc, audits = _mock_supabase_for_exemptions(
                 student_tenant="UTM",
                 assigned_advisor="STAFF-UTM-01",
@@ -479,7 +482,6 @@ def test_exemptions_endpoint_rejects_missing_or_negative_credits(bad_credits):
                 caller_tenant="UTM"
             )
             m1.return_value = mock_svc
-            m2.return_value = mock_svc
 
             payload = {"course_actions": [
                 {"action": "add", "course_code": "SECJ1013", "grade": "EX", "credits": bad_credits}

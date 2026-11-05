@@ -9,9 +9,11 @@ from pydantic import BaseModel, Field
 try:
     from app.core.auth import verify_advisor_jwt
     from app.core.supabase_client import SupabaseService
+    from app.engine.grading import normalize_semester
 except ImportError:
     from backend.app.core.auth import verify_advisor_jwt
     from backend.app.core.supabase_client import SupabaseService
+    from backend.app.engine.grading import normalize_semester
 
 router = APIRouter(prefix="/students", tags=["Students"])
 EXEMPTION_GRADES = ("EX", "CT")
@@ -23,7 +25,6 @@ class CourseExemptionAction(BaseModel):
     grade: str = Field("EX", description="'EX' (exemption) or 'CT' (credit transfer)")
     credits: Optional[int] = Field(None, description="Course credit hours")
     course_name: Optional[str] = Field(None, description="Course name")
-    semester: Optional[str] = Field(None, description="Target semester designation")
 
 
 class StudentExemptionsPatchRequest(BaseModel):
@@ -137,8 +138,21 @@ async def patch_student_exemptions(
             )
         actions.append((ca, clean_code, action_type, grade_val))
 
+    codes = [code for _, code, _, _ in actions]
+    if len(set(codes)) != len(codes):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Each course can only appear once in a request."
+        )
+
+    grades_by_code: dict = {}
+    if codes:
+        existing = svc.client.table("academic_records").select("course_code, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).in_("course_code", codes).execute()
+        for row in existing.data or []:
+            grades_by_code.setdefault(row["course_code"], []).append((row.get("grade") or "").strip().upper())
+
     add_codes = [code for _, code, action_type, _ in actions if action_type == "add"]
-    old_exempt_grades = {}
+    exemption_semester = None
     if add_codes:
         catalog = svc.get_template_course_catalog(clean_matric, student_tenant)  # DB errors raise
         if catalog is None:
@@ -152,15 +166,31 @@ async def patch_student_exemptions(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Course {code} is not in this student's degree template"
                 )
-        # A real grade already counts the credits; an exemption on top would count them twice.
-        existing = svc.client.table("academic_records").select("course_code, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).in_("course_code", add_codes).execute()
-        for row in existing.data or []:
-            if (row.get("grade") or "").strip().upper() not in EXEMPTION_GRADES:
+            # Any existing row refuses the add: a real grade would count the credits twice.
+            grades = grades_by_code.get(code)
+            if grades:
+                already_exempted = all(g in EXEMPTION_GRADES for g in grades)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Course {row['course_code']} already has a grade; exemption not needed"
+                    detail=f"Course {code} already exempted — remove it first" if already_exempted
+                    else f"Course {code} already has a grade; exemption not needed"
                 )
-        old_exempt_grades = {row["course_code"]: row.get("grade") for row in existing.data or []}
+        template = svc.client.table("degree_templates").select("syllabus_year").eq("tenant_id", student_tenant).eq("id", svc._student_template_id(clean_matric, student_tenant)).limit(1).execute()
+        syllabus_year = template.data[0].get("syllabus_year") if template.data else None
+        try:
+            exemption_semester = normalize_semester(f"SEM 1 {syllabus_year}")
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Degree template syllabus year '{syllabus_year}' is not a session like 2024/2025; exemptions cannot be dated."
+            )
+
+    for _, code, action_type, _ in actions:
+        if action_type == "remove" and not any(g in EXEMPTION_GRADES for g in grades_by_code.get(code, [])):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Course {code} has no EX/CT record to remove."
+            )
 
     audit_rows: List[dict] = []
     old_entry_sem = int(student.get("entry_semester") or 1)
@@ -200,9 +230,7 @@ async def patch_student_exemptions(
     # Process EX / CT course records
     for ca, clean_code, action_type, grade_val in actions:
         if action_type == "add":
-            old_grade = old_exempt_grades.get(clean_code)
-
-            svc.client.table("academic_records").upsert({
+            svc.client.table("academic_records").insert({
                 "tenant_id": student_tenant,
                 "matric_no": clean_matric,
                 "course_code": clean_code,
@@ -211,7 +239,7 @@ async def patch_student_exemptions(
                 "grade": grade_val,
                 "grade_point": 0.00,
                 "status": "Exempted",
-                "semester": ca.semester or f"Sem {request.entry_semester or old_entry_sem}"
+                "semester": exemption_semester
             }).execute()
 
             audit_rows.append({
@@ -219,14 +247,13 @@ async def patch_student_exemptions(
                 "matric_no": clean_matric,
                 "changed_by_staff_id": advisor_staff_id,
                 "field": f"course_exemption_add:{clean_code}",
-                "old_value": str(old_grade) if old_grade else None,
+                "old_value": None,
                 "new_value": grade_val
             })
 
         else:  # "remove" (validated above)
             # Only exemption rows; a real grade for the course is never deleted here
-            existing_res = svc.client.table("academic_records").select("id, grade").eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).in_("grade", list(EXEMPTION_GRADES)).execute()
-            old_grade = existing_res.data[0].get("grade") if existing_res.data else None
+            old_grade = next(g for g in grades_by_code[clean_code] if g in EXEMPTION_GRADES)
 
             svc.client.table("academic_records").delete().eq("tenant_id", student_tenant).eq("matric_no", clean_matric).eq("course_code", clean_code).in_("grade", list(EXEMPTION_GRADES)).execute()
 
@@ -235,7 +262,7 @@ async def patch_student_exemptions(
                 "matric_no": clean_matric,
                 "changed_by_staff_id": advisor_staff_id,
                 "field": f"course_exemption_remove:{clean_code}",
-                "old_value": str(old_grade) if old_grade else None,
+                "old_value": old_grade,
                 "new_value": None
             })
 

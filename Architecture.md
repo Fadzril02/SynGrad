@@ -61,7 +61,7 @@ Vercel: React 19 + Vite SPA ──(Supabase JS: auth, RLS reads, slip upload)─
 | `degree_audits` | audit snapshots; read: own student or own advisor (mig 30) |
 | `elective_assignments` | manual elective overrides (mig 33): assign/exclude |
 | `exemption_audit` | exemption history |
-| view `advisee_roster_summary` | `security_invoker = true`; CGPA/credits from tenant grade scale |
+| view `advisee_roster_summary` | `security_invoker = true`; CGPA/credits from tenant grade scale, one row per course (same rules as `compute_cgpa` / `compute_completed_credits`) |
 
 ## 3. Security
 - **RLS**: SECURITY DEFINER helpers `my_staff_ids()`, `my_advisor_staff_ids()`, `my_matric_nos()`, `my_advisee_matric_nos()`, `my_tenant_id()`. Students see own rows, advisors their advisees', anon nothing. Identity-protect triggers bypass only with no JWT claims (SQL editor) or `service_role`.
