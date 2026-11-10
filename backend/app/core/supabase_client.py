@@ -13,6 +13,12 @@ except ImportError:
     from backend.app.schemas.audit import CourseAuditResult, AuditSummary
     from backend.app.engine.grading import normalize_semester
 
+EXEMPTION_GRADES = ("EX", "CT")
+
+
+class ExemptionConflictError(Exception):
+    """A write would overwrite an EX/CT exemption row."""
+
 
 def get_supabase_client() -> Optional[Client]:
     """
@@ -141,6 +147,19 @@ class SupabaseService:
         cohort = self.client.table("cohorts").select("template_id").eq("id", cohort_id).limit(1).execute()
         return cohort.data[0].get("template_id") if cohort.data else None
 
+    def get_student_template(self, matric_no: str, tenant_id: str) -> Optional[tuple]:
+        """(template_id, syllabus_year) of the student's degree template, tenant-scoped. None when no cohort/template. DB errors raise."""
+        template_id = self._student_template_id(matric_no, tenant_id)
+        if not template_id:
+            return None
+        tmpl = (
+            self.client.table("degree_templates").select("syllabus_year")
+            .eq("tenant_id", tenant_id).eq("id", template_id).limit(1).execute()
+        )
+        if not tmpl.data:
+            raise RuntimeError(f"Degree template '{template_id}' not found in tenant '{tenant_id}'.")
+        return template_id, tmpl.data[0].get("syllabus_year")
+
     def get_template_course_catalog(
         self, matric_no: str, tenant_id: str
     ) -> Optional[Dict[str, Dict[str, Any]]]:
@@ -149,9 +168,10 @@ class SupabaseService:
         student's degree template: student -> cohort -> template -> template_courses.
         Returns None when the student has no cohort/template yet. DB errors raise.
         """
-        template_id = self._student_template_id(matric_no, tenant_id)
-        if not template_id:
+        template = self.get_student_template(matric_no, tenant_id)
+        if not template:
             return None
+        template_id = template[0]
 
         rows = (
             self.client.table("template_courses")
@@ -276,6 +296,21 @@ class SupabaseService:
                 c_code = r.course_code.replace(" ", "").upper()
                 c_sem = normalize_semester(r.semester)
                 deduped_map[(c_code, c_sem)] = (r, c_code, c_sem)
+
+            # 2. An approval must never overwrite an EX/CT row with a different grade
+            if deduped_map:
+                existing = (
+                    self.client.table("academic_records").select("course_code, semester, grade")
+                    .eq("tenant_id", tenant_id).eq("matric_no", target_matric)
+                    .in_("course_code", sorted({code for code, _ in deduped_map}))
+                    .in_("grade", list(EXEMPTION_GRADES)).execute()
+                )
+                for row in existing.data or []:
+                    key = (row["course_code"], normalize_semester(row["semester"]))
+                    if key in deduped_map and (deduped_map[key][0].grade or "").strip().upper() != row["grade"]:
+                        raise ExemptionConflictError(
+                            f"Course {row['course_code']} has an exemption in that semester — remove it first"
+                        )
 
             records_to_upsert = [
                 {

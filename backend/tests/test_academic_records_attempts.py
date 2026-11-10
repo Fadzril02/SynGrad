@@ -27,7 +27,7 @@ try:
     )
     from app.engine.graph_resolver import PrerequisiteGraphResolver
     from app.v1.endpoints.audit import fetch_and_merge_historical_records
-    from app.core.supabase_client import SupabaseService
+    from app.core.supabase_client import SupabaseService, ExemptionConflictError
 except ImportError:
     from backend.app.main import app
     from backend.app.core.auth import verify_advisor_jwt
@@ -41,7 +41,7 @@ except ImportError:
     )
     from backend.app.engine.graph_resolver import PrerequisiteGraphResolver
     from backend.app.v1.endpoints.audit import fetch_and_merge_historical_records
-    from backend.app.core.supabase_client import SupabaseService
+    from backend.app.core.supabase_client import SupabaseService, ExemptionConflictError
 
 client = TestClient(app)
 
@@ -395,6 +395,57 @@ def test_persist_audit_results_dedupes_batch_on_course_and_semester():
         assert len(records_upserted) == 1
         assert records_upserted[0]["grade"] == "A"
         assert records_upserted[0]["semester"] == "SEM 1 2024/2025"
+
+
+def _persist_over_exemption(batch_grade):
+    client = MagicMock()
+    q = client.table.return_value
+    for m in ("select", "eq", "in_"):
+        getattr(q, m).return_value = q
+    q.execute.return_value = MagicMock(data=[{"course_code": "SECJ1013", "semester": "SEM 1 2024/2025", "grade": "EX"}])
+    svc = SupabaseService()
+    svc.client = client
+    record = CourseAuditResult(course_code="SECJ 1013", course_name="Prog I", credits=3, grade=batch_grade, grade_point=0.0, prerequisite_met=True,
+                               semester="Sem 1 2024/25", status="Passed", traffic_light="GREEN")
+    with patch.object(svc, "_ensure_ready"):
+        svc.persist_audit_results(matric_no="A1", advisor_id="S1", records=[record],
+                                  summary=AuditSummary(cgpa=4.0), storage_pdf_path="doc:1", tenant_id="UTM")
+    return q
+
+
+def test_persist_refuses_to_overwrite_exemption():
+    with pytest.raises(ExemptionConflictError, match="Course SECJ1013 has an exemption in that semester — remove it first"):
+        _persist_over_exemption("A")
+
+
+def test_persist_allows_same_exemption_in_merged_history():
+    q = _persist_over_exemption("EX")
+    q.upsert.assert_called_once()
+
+
+def test_finalize_maps_exemption_conflict_to_409():
+    import asyncio
+    audit_ep = sys.modules[fetch_and_merge_historical_records.__module__]
+    from fastapi import HTTPException
+    svc = MagicMock()
+    svc.client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    svc.get_template_course_catalog.return_value = {}
+    svc.get_student_block_exempted_credits.return_value = (0, 130)
+    svc.persist_audit_results.side_effect = ExemptionConflictError("Course SECJ1013 has an exemption in that semester — remove it first")
+    scale = GradingScale("UTM", [GradeDefinition("A", 4.0, 1, True, True, True)])
+    request = audit_ep.FinalizeApprovalRequest(
+        document_id="doc-1", matric_number="A1", academic_session="2024/2025", semester=1,
+        courses=[{"course_code": "SECJ1013", "course_name": "P", "grade": "A", "credits": 3, "credit_hour": 3, "status": "Pass"}],
+    )
+    with patch.object(audit_ep, "supabase_svc", svc), patch.object(audit_ep, "load_scale", return_value=scale), \
+            patch.object(audit_ep, "_load_repeat_policy", return_value="latest"), \
+            patch.object(audit_ep, "_extract_advisor_id", return_value="S1"), \
+            patch.object(audit_ep, "_extract_tenant_id", return_value="UTM"), \
+            patch.object(audit_ep, "_load_authorized_document"):
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(audit_ep.finalize_approval(request, {"sub": "u1"}))
+    assert e.value.status_code == 409
+    assert "remove it first" in e.value.detail
 
 
 # =============================================================================

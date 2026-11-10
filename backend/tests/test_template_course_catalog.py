@@ -38,6 +38,7 @@ def test_maps_template_courses_by_code():
     svc = _svc({
         "students": [{"cohort_id": "c1"}],
         "cohorts": [{"template_id": "t1"}],
+        "degree_templates": [{"id": "t1", "syllabus_year": "2024/2025"}],
         "template_courses": [{
             "course_code": "SECJ 1023", "course_name": "Prog II", "credit_hour": 3,
             "category": "Core", "prerequisites": {"type": "AND", "courses": ["SECJ1013"]},
@@ -105,3 +106,22 @@ def test_block_exempted_credits_db_error_raises():
 def test_template_lookup_requires_tenant():
     with pytest.raises(ValueError):
         _svc({})._student_template_id("A1", "")
+
+
+def test_student_template_returns_id_and_syllabus_year():
+    svc = _svc({
+        "students": [{"cohort_id": "c1"}],
+        "cohorts": [{"template_id": "t1"}],
+        "degree_templates": [{"tenant_id": "UTM", "id": "t1", "syllabus_year": "2024/2025"}],
+    })
+    assert svc.get_student_template("a1", "UTM") == ("t1", "2024/2025")
+
+
+def test_student_template_in_other_tenant_fails_loud():
+    svc = _svc({
+        "students": [{"cohort_id": "c1"}],
+        "cohorts": [{"template_id": "t1"}],
+        "degree_templates": [{"tenant_id": "UNIKL", "id": "t1", "syllabus_year": "2024/2025"}],
+    })
+    with pytest.raises(RuntimeError, match="not found"):
+        svc.get_student_template("a1", "UTM")

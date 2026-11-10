@@ -43,7 +43,7 @@ try:
     from app.engine.slip_validation import validate_slip, zero_credits_allowed
     from app.engine.progress import compute_progress
     from app.core.config import settings
-    from app.core.supabase_client import SupabaseService
+    from app.core.supabase_client import SupabaseService, ExemptionConflictError
     from app.core.auth import verify_advisor_jwt
 except ImportError:
     from backend.app.schemas.audit import (
@@ -71,7 +71,7 @@ except ImportError:
     from backend.app.engine.slip_validation import validate_slip, zero_credits_allowed
     from backend.app.engine.progress import compute_progress
     from backend.app.core.config import settings
-    from backend.app.core.supabase_client import SupabaseService
+    from backend.app.core.supabase_client import SupabaseService, ExemptionConflictError
     from backend.app.core.auth import verify_advisor_jwt
 
 router = APIRouter(prefix="/audit", tags=["Degree Audit"])
@@ -995,6 +995,8 @@ async def finalize_approval(
             storage_pdf_path=f"document:{request.document_id}",
             tenant_id=tenant_id
         )
+    except ExemptionConflictError as ce:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ce))
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

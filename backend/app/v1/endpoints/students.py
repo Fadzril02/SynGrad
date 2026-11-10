@@ -154,7 +154,8 @@ async def patch_student_exemptions(
     add_codes = [code for _, code, action_type, _ in actions if action_type == "add"]
     exemption_semester = None
     if add_codes:
-        catalog = svc.get_template_course_catalog(clean_matric, student_tenant)  # DB errors raise
+        template = svc.get_student_template(clean_matric, student_tenant)  # DB errors raise
+        catalog = svc.get_template_course_catalog(clean_matric, student_tenant) if template else None
         if catalog is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -175,8 +176,7 @@ async def patch_student_exemptions(
                     detail=f"Course {code} already exempted — remove it first" if already_exempted
                     else f"Course {code} already has a grade; exemption not needed"
                 )
-        template = svc.client.table("degree_templates").select("syllabus_year").eq("tenant_id", student_tenant).eq("id", svc._student_template_id(clean_matric, student_tenant)).limit(1).execute()
-        syllabus_year = template.data[0].get("syllabus_year") if template.data else None
+        syllabus_year = template[1]
         try:
             exemption_semester = normalize_semester(f"SEM 1 {syllabus_year}")
         except ValueError:

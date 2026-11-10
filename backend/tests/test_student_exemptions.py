@@ -17,7 +17,6 @@ def _svc(catalog, audit_error=None, records=(), syllabus_year="2024/2025"):
         "students": [{"matric_no": "A1", "tenant_id": "UTM", "advisor_staff_id": "S1", "cohort_id": "c1"}],
         "advisors": [{"staff_id": "S1", "tenant_id": "UTM"}],
         "academic_records": list(records),
-        "degree_templates": [{"syllabus_year": syllabus_year}],
     }
     client = MagicMock()
     client.queries = []
@@ -35,6 +34,7 @@ def _svc(catalog, audit_error=None, records=(), syllabus_year="2024/2025"):
     client.table.side_effect = table
     svc = MagicMock(client=client)
     svc.get_template_course_catalog.return_value = catalog
+    svc.get_student_template.return_value = None if catalog is None else ("t1", syllabus_year)
     return svc
 
 
